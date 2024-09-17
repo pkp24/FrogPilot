@@ -13,9 +13,10 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
+      - name: Checkout FrogPilot-Staging branch
         uses: actions/checkout@v3
         with:
+          ref: FrogPilot-Staging
           fetch-depth: 0
           token: ${{ secrets.MY_PERSONAL_ACCESS_TOKEN }}
 
@@ -28,13 +29,16 @@ jobs:
         run: |
           git push origin --delete FP-Staging || echo "FP-Staging does not exist, continuing."
 
-      - name: Reset to origin/FrogPilot-Staging and create FP-Staging
+      - name: Ensure Clean State
         run: |
-          git fetch origin FrogPilot-Staging
-          git checkout origin/FrogPilot-Staging
-          git reset --hard origin/FrogPilot-Staging
+          git reset --hard
           git clean -fdx
+          echo "Repository has been reset and cleaned."
+
+      - name: Create FP-Staging branch from FrogPilot-Staging
+        run: |
           git checkout -b FP-Staging
+          echo "FP-Staging branch created from FrogPilot-Staging."
 
       - name: Cherry-pick specific commit
         run: |
