@@ -7,14 +7,12 @@ on:
 jobs:
   compare-commits:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
 
     steps:
       - name: Find most recent upstream commit for FrogPilot
         id: upstream_commit_frogpilot
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.MY_PERSONAL_ACCESS_TOKEN }}
         run: |
           UPSTREAM_COMMIT_JSON=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
           -H "Accept: application/vnd.github.v3+json" \
@@ -26,7 +24,7 @@ jobs:
       - name: Find most recent upstream commit for FrogPilot-Staging
         id: upstream_commit_staging
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.MY_PERSONAL_ACCESS_TOKEN }}
         run: |
           UPSTREAM_COMMIT_STAGING_JSON=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
           -H "Accept: application/vnd.github.v3+json" \
@@ -39,7 +37,7 @@ jobs:
       - name: Find most recent upstream commit for FrogPilot-Testing
         id: upstream_commit_testing
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.MY_PERSONAL_ACCESS_TOKEN }}
         run: |
           UPSTREAM_COMMIT_TESTING_JSON=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
           -H "Accept: application/vnd.github.v3+json" \
@@ -52,7 +50,7 @@ jobs:
       - name: Find your most recent commit for FrogPilot (excluding your commits and actions bot)
         id: your_commit_frogpilot
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.MY_PERSONAL_ACCESS_TOKEN }}
         run: |
           YOUR_COMMIT_JSON=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
           -H "Accept: application/vnd.github.v3+json" \
@@ -64,7 +62,7 @@ jobs:
       - name: Find your most recent commit for FrogPilot-Staging (excluding your commits and actions bot)
         id: your_commit_staging
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.MY_PERSONAL_ACCESS_TOKEN }}
         run: |
           YOUR_COMMIT_STAGING_JSON=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
           -H "Accept: application/vnd.github.v3+json" \
@@ -77,7 +75,7 @@ jobs:
       - name: Find your most recent commit for FrogPilot-Testing (excluding your commits and actions bot)
         id: your_commit_testing
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.MY_PERSONAL_ACCESS_TOKEN }}
         run: |
           YOUR_COMMIT_TESTING_JSON=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
           -H "Accept: application/vnd.github.v3+json" \
@@ -100,7 +98,7 @@ jobs:
         env:
           MY_PAT: ${{ secrets.MY_PERSONAL_ACCESS_TOKEN }}
 
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.MY_PERSONAL_ACCESS_TOKEN }}
         run: |
           # Sync FrogPilot branch
           
