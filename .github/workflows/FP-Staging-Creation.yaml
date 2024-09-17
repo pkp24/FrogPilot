@@ -2,42 +2,42 @@ name: Create FP-Staging with Cherry-pick
 
 on:
   workflow_dispatch:
+    inputs:
+      commit_sha:
+        description: 'Commit SHA to cherry-pick'
+        required: true
+        default: '2d6cf14b9a6d856bbd330b1056e8e25bfb9722ab'
 
 jobs:
   create-fp-staging:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v2
-      with:
-        fetch-depth: 0
-        token: ${{ secrets.MY_PERSONAL_ACCESS_TOKEN }}
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.MY_PERSONAL_ACCESS_TOKEN }}
 
-    - name: Fetch all branches
-      run: |
-        git fetch --all
-        git fetch origin FrogPilot-Staging
+      - name: Configure Git
+        run: |
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
 
-    - name: Configure Git
-      run: |
-        git config user.name "GitHub Actions"
-        git config user.email "actions@github.com"
+      - name: Delete existing FP-Staging branch if it exists
+        run: |
+          git push origin --delete FP-Staging || echo "FP-Staging does not exist, continuing."
 
-    - name: Delete existing FP-Staging branch if it exists
-      run: |
-        git push origin --delete FP-Staging || true
+      - name: Create FP-Staging branch from FrogPilot-Staging
+        run: |
+          git fetch origin FrogPilot-Staging
+          git checkout -b FP-Staging origin/FrogPilot-Staging
 
-    - name: Discard local changes and create new FP-Staging branch
-      run: |
-        git reset --hard
-        git clean -fd
-        git checkout -b FP-Staging origin/FrogPilot-Staging
+      - name: Cherry-pick specific commit
+        run: |
+          git cherry-pick ${{ github.event.inputs.commit_sha }}
+        continue-on-error: false  # Ensures the workflow fails if cherry-pick fails
 
-    - name: Cherry-pick specific commit
-      run: |
-        git cherry-pick 2d6cf14b9a6d856bbd330b1056e8e25bfb9722ab
-
-    - name: Push new FP-Staging branch
-      run: |
-        git push -f origin FP-Staging
+      - name: Push FP-Staging branch
+        run: |
+          git push origin FP-Staging --force
