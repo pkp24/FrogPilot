@@ -1,0 +1,41 @@
+name: Create FP-Staging with Cherry-pick
+
+on:
+  workflow_dispatch:
+
+jobs:
+  create-fp-staging:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v2
+      with:
+        fetch-depth: 0
+        token: ${{ secrets.MY_PERSONAL_ACCESS_TOKEN }}
+
+    - name: Fetch all branches
+      run: |
+        git fetch --all
+        git fetch origin FrogPilot-Staging
+
+    - name: Configure Git
+      run: |
+        git config user.name "GitHub Actions"
+        git config user.email "actions@github.com"
+
+    - name: Delete existing FP-Staging branch if it exists
+      run: |
+        git push origin --delete FP-Staging || true
+
+    - name: Create new FP-Staging branch
+      run: |
+        git checkout -b FP-Staging origin/FrogPilot-Staging
+
+    - name: Cherry-pick specific commit
+      run: |
+        git cherry-pick faa285987daee3e133098ed77d8f3567b183b325
+
+    - name: Push new FP-Staging branch
+      run: |
+        git push -f origin FP-Staging
