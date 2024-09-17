@@ -22,9 +22,9 @@ jobs:
         git config --global user.email "actions@github.com"
 
     - name: Force checkout target branch
-      run: git checkout -f FP-Testing
+      run: git checkout -f FP-Staging
 
     - name: Cherry-pick commit
       run: |
         git cherry-pick faa285987daee3e133098ed77d8f3567b183b325
-        git push origin FrogPilot-Testing-newtemp
+        git push origin FP-Staging
