@@ -28,10 +28,13 @@ jobs:
         run: |
           git push origin --delete FP-Staging || echo "FP-Staging does not exist, continuing."
 
-      - name: Create FP-Staging branch from FrogPilot-Staging
+      - name: Reset to origin/FrogPilot-Staging and create FP-Staging
         run: |
           git fetch origin FrogPilot-Staging
-          git checkout -b FP-Staging origin/FrogPilot-Staging
+          git checkout origin/FrogPilot-Staging
+          git reset --hard origin/FrogPilot-Staging
+          git clean -fdx
+          git checkout -b FP-Staging
 
       - name: Cherry-pick specific commit
         run: |
