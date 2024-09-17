@@ -7,6 +7,9 @@ on:
 jobs:
   compare-commits:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
     steps:
       - name: Find most recent upstream commit for FrogPilot
         id: upstream_commit_frogpilot
