@@ -28,8 +28,10 @@ jobs:
       run: |
         git push origin --delete FP-Staging || true
 
-    - name: Create new FP-Staging branch
+    - name: Discard local changes and create new FP-Staging branch
       run: |
+        git reset --hard
+        git clean -fd
         git checkout -b FP-Staging origin/FrogPilot-Staging
 
     - name: Cherry-pick specific commit
