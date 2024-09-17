@@ -1,4 +1,4 @@
-name: Cherry-pick commit
+name: Cherry-pick commit to FP-Staging
 
 on:
   workflow_dispatch:
@@ -21,7 +21,7 @@ jobs:
         git config --global user.name "GitHub Actions"
         git config --global user.email "actions@github.com"
 
-    - name: Force checkout target branch
+    - name: Force checkout FP-Staging branch
       run: git checkout -f FP-Staging
 
     - name: Cherry-pick commit
