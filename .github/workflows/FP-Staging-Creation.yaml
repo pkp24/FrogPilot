@@ -36,7 +36,7 @@ jobs:
 
     - name: Cherry-pick specific commit
       run: |
-        git cherry-pick faa285987daee3e133098ed77d8f3567b183b325
+        git cherry-pick 2d6cf14b9a6d856bbd330b1056e8e25bfb9722ab
 
     - name: Push new FP-Staging branch
       run: |
