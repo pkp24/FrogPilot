@@ -1,0 +1,50 @@
+name: Create FP-Testing with Cherry-pick
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit_sha:
+        description: 'Commit SHA to cherry-pick'
+        required: true
+        default: '2d6cf14b9a6d856bbd330b1056e8e25bfb9722ab'
+
+jobs:
+  create-fp-testing:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout FrogPilot-Testing branch
+        uses: actions/checkout@v3
+        with:
+          ref: FrogPilot-Testing
+          fetch-depth: 0
+          token: ${{ secrets.MY_PERSONAL_ACCESS_TOKEN }}
+
+      - name: Configure Git
+        run: |
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+
+      - name: Delete existing FP-Testing branch if it exists
+        run: |
+          git push origin --delete FP-Testing || echo "FP-Testing does not exist, continuing."
+
+      - name: Ensure Clean State
+        run: |
+          git reset --hard
+          git clean -fdx
+          echo "Repository has been reset and cleaned."
+
+      - name: Create FP-Testing branch from FrogPilot-Testing
+        run: |
+          git checkout -b FP-Testing
+          echo "FP-Testing branch created from FrogPilot-Testing."
+
+      - name: Cherry-pick specific commit
+        run: |
+          git cherry-pick ${{ github.event.inputs.commit_sha }}
+        continue-on-error: false  # Ensures the workflow fails if cherry-pick fails
+
+      - name: Push FP-Testing branch
+        run: |
+          git push origin FP-Testing --force
