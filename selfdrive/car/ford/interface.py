@@ -1,18 +1,20 @@
-from cereal import car
+from cereal import car, custom
 from panda import Panda
 from openpilot.common.conversions import Conversions as CV
-from openpilot.selfdrive.car import get_safety_config
+from openpilot.selfdrive.car import create_button_events, get_safety_config
 from openpilot.selfdrive.car.ford.fordcan import CanBus
-from openpilot.selfdrive.car.ford.values import CANFD_CAR, CAR, Ecu
+from openpilot.selfdrive.car.ford.values import Ecu, FordFlags
 from openpilot.selfdrive.car.interfaces import CarInterfaceBase
 
+ButtonType = car.CarState.ButtonEvent.Type
+FrogPilotButtonType = custom.FrogPilotCarState.ButtonEvent.Type
 TransmissionType = car.CarParams.TransmissionType
 GearShifter = car.CarState.GearShifter
 
 
 class CarInterface(CarInterfaceBase):
   @staticmethod
-  def _get_params(ret, params, candidate, fingerprint, car_fw, experimental_long, docs):
+  def _get_params(ret, candidate, fingerprint, car_fw, disable_openpilot_long, experimental_long, docs):
     ret.carName = "ford"
     ret.dashcamOnly = False
 
@@ -20,10 +22,6 @@ class CarInterface(CarInterfaceBase):
     ret.steerControlType = car.CarParams.SteerControlType.angle
     ret.steerActuatorDelay = 0.2
     ret.steerLimitTimer = 1.0
-
-    ret.longitudinalTuning.kpBP = [0.]
-    ret.longitudinalTuning.kpV = [0.5]
-    ret.longitudinalTuning.kiV = [0.]
 
     CAN = CanBus(fingerprint=fingerprint)
     cfgs = [get_safety_config(car.CarParams.SafetyModel.ford)]
@@ -36,53 +34,20 @@ class CarInterface(CarInterfaceBase):
       ret.safetyConfigs[-1].safetyParam |= Panda.FLAG_FORD_LONG_CONTROL
       ret.openpilotLongitudinalControl = True
 
-    if candidate in CANFD_CAR:
+    if ret.flags & FordFlags.CANFD:
       ret.safetyConfigs[-1].safetyParam |= Panda.FLAG_FORD_CANFD
-
-    if candidate == CAR.BRONCO_SPORT_MK1:
-      ret.wheelbase = 2.67
-      ret.steerRatio = 17.7
-      ret.mass = 1625
-
-    elif candidate == CAR.ESCAPE_MK4:
-      ret.wheelbase = 2.71
-      ret.steerRatio = 16.7
-      ret.mass = 1750
-
-    elif candidate == CAR.EXPLORER_MK6:
-      ret.wheelbase = 3.025
-      ret.steerRatio = 16.8
-      ret.mass = 2050
-
-    elif candidate == CAR.F_150_MK14:
-      # required trim only on SuperCrew
-      ret.wheelbase = 3.69
-      ret.steerRatio = 17.0
-      ret.mass = 2000
-
-    elif candidate == CAR.F_150_LIGHTNING_MK1:
-      # required trim only on SuperCrew
-      ret.wheelbase = 3.70
-      ret.steerRatio = 16.9
-      ret.mass = 2948
-
-    elif candidate == CAR.MUSTANG_MACH_E_MK1:
-      ret.wheelbase = 2.984
-      ret.steerRatio = 17.0  # guess
-      ret.mass = 2200
-
-    elif candidate == CAR.FOCUS_MK4:
-      ret.wheelbase = 2.7
-      ret.steerRatio = 15.0
-      ret.mass = 1350
-
-    elif candidate == CAR.MAVERICK_MK1:
-      ret.wheelbase = 3.076
-      ret.steerRatio = 17.0
-      ret.mass = 1650
-
     else:
-      raise ValueError(f"Unsupported car: {candidate}")
+      # Lock out if the car does not have needed lateral and longitudinal control APIs.
+      # Note that we also check CAN for adaptive cruise, but no known signal for LCA exists
+      pscm_config = next((fw for fw in car_fw if fw.ecu == Ecu.eps and b'\x22\xDE\x01' in fw.request), None)
+      if pscm_config:
+        if len(pscm_config.fwVersion) != 24:
+          ret.dashcamOnly = True
+        else:
+          config_tja = pscm_config.fwVersion[7]  # Traffic Jam Assist
+          config_lca = pscm_config.fwVersion[8]  # Lane Centering Assist
+          if config_tja != 0xFF or config_lca != 0xFF:
+            ret.dashcamOnly = True
 
     # Auto Transmission: 0x732 ECU or Gear_Shift_by_Wire_FD1
     found_ecus = [fw.ecu for fw in car_fw]
@@ -103,18 +68,18 @@ class CarInterface(CarInterfaceBase):
     ret.centerToFront = ret.wheelbase * 0.44
     return ret
 
-  def _update(self, c, frogpilot_variables):
-    ret = self.CS.update(self.cp, self.cp_cam, frogpilot_variables)
+  def _update(self, c, frogpilot_toggles):
+    ret, fp_ret = self.CS.update(self.cp, self.cp_cam, frogpilot_toggles)
 
-    events = self.create_common_events(ret, frogpilot_variables, extra_gears=[GearShifter.manumatic])
+    ret.buttonEvents = [
+      *create_button_events(self.CS.distance_button, self.CS.prev_distance_button, {1: ButtonType.gapAdjustCruise}),
+      *create_button_events(self.CS.lkas_enabled, self.CS.lkas_previously_enabled, {1: FrogPilotButtonType.lkas}),
+    ]
+
+    events = self.create_common_events(ret, extra_gears=[GearShifter.manumatic])
     if not self.CS.vehicle_sensors_valid:
       events.add(car.CarEvent.EventName.vehicleSensorsInvalid)
-    if self.CS.unsupported_platform:
-      events.add(car.CarEvent.EventName.startupNoControl)
 
     ret.events = events.to_msg()
 
-    return ret
-
-  def apply(self, c, now_nanos, frogpilot_variables):
-    return self.CC.update(c, self.CS, now_nanos, frogpilot_variables)
+    return ret, fp_ret

@@ -1,574 +1,217 @@
-#include <QMouseEvent>
-
-#include "selfdrive/frogpilot/navigation/ui/navigation_functions.h"
 #include "selfdrive/frogpilot/navigation/ui/navigation_settings.h"
 
-FrogPilotNavigationPanel::FrogPilotNavigationPanel(QWidget *parent) : QFrame(parent), scene(uiState()->scene) {
-  mainLayout = new QStackedLayout(this);
-
-  navigationWidget = new QWidget();
-  QVBoxLayout *navigationLayout = new QVBoxLayout(navigationWidget);
-  navigationLayout->setMargin(40);
-
-  FrogPilotListWidget *list = new FrogPilotListWidget(navigationWidget);
-
-  Primeless *primelessPanel = new Primeless(this);
-  mainLayout->addWidget(primelessPanel);
-
-  ButtonControl *manageNOOButton = new ButtonControl(tr("Manage Primeless Navigation Settings"), tr("MANAGE"), tr("Manage primeless navigate on openpilot settings."));
-  QObject::connect(manageNOOButton, &ButtonControl::clicked, [=]() { mainLayout->setCurrentWidget(primelessPanel); });
-  QObject::connect(primelessPanel, &Primeless::backPress, [=]() { mainLayout->setCurrentWidget(navigationWidget); });
-  list->addItem(manageNOOButton);
-  manageNOOButton->setVisible(!uiState()->hasPrime());
-
-  std::vector<QString> scheduleOptions{tr("Manually"), tr("Weekly"), tr("Monthly")};
-  ButtonParamControl *preferredSchedule = new ButtonParamControl("PreferredSchedule", tr("Maps Scheduler"),
-                                          tr("Choose the frequency for updating maps with the latest OpenStreetMap (OSM) changes. "
-                                          "Weekly updates begin at midnight every Sunday, while monthly updates start at midnight on the 1st of each month. "
-                                          "If your device is off or not connected to WiFi during a scheduled update, the download will be conducted the next "
-                                          "time you're offroad with a WiFi connection."),
-                                          "",
-                                          scheduleOptions);
-  schedule = params.getInt("PreferredSchedule");
-  schedulePending = params.getBool("SchedulePending");
-  list->addItem(preferredSchedule);
-
-  list->addItem(offlineMapsSize = new LabelControl(tr("Offline Maps Size"), formatSize(calculateDirectorySize(offlineFolderPath))));
-  offlineMapsSize->setVisible(true);
-  list->addItem(lastMapsDownload = new LabelControl(tr("Last Download"), ""));
-  lastMapsDownload->setVisible(!params.get("LastMapsUpdate").empty());
-  lastMapsDownload->setText(QString::fromStdString(params.get("LastMapsUpdate")));
-  list->addItem(offlineMapsStatus = new LabelControl(tr("Offline Maps Status"), ""));
-  offlineMapsStatus->setVisible(false);
-  list->addItem(offlineMapsETA = new LabelControl(tr("Offline Maps ETA"), ""));
-  offlineMapsETA->setVisible(false);
-  list->addItem(offlineMapsElapsed = new LabelControl(tr("Time Elapsed"), ""));
-  offlineMapsElapsed->setVisible(false);
-
-  cancelDownloadButton = new ButtonControl(tr("Cancel Download"), tr("CANCEL"), tr("Cancel your current download."));
-  QObject::connect(cancelDownloadButton, &ButtonControl::clicked, [this] { cancelDownload(this); });
-  list->addItem(cancelDownloadButton);
-  cancelDownloadButton->setVisible(false);
-
-  downloadOfflineMapsButton = new ButtonControl(tr("Download Offline Maps"), tr("DOWNLOAD"), tr("Download your selected offline maps to use with openpilot."));
-  QObject::connect(downloadOfflineMapsButton, &ButtonControl::clicked, [this] { downloadMaps(); });
-  list->addItem(downloadOfflineMapsButton);
-  downloadOfflineMapsButton->setVisible(!params.get("MapsSelected").empty());
-
-  SelectMaps *mapsPanel = new SelectMaps(this);
-  mainLayout->addWidget(mapsPanel);
-
-  QObject::connect(mapsPanel, &SelectMaps::setMaps, [=]() { setMaps(); });
-
-  ButtonControl *selectMapsButton = new ButtonControl(tr("Select Offline Maps"), tr("SELECT"), tr("Select your maps to use with OSM."));
-  QObject::connect(selectMapsButton, &ButtonControl::clicked, [=]() { mainLayout->setCurrentWidget(mapsPanel); });
-  QObject::connect(mapsPanel, &SelectMaps::backPress, [=]() { mainLayout->setCurrentWidget(navigationWidget); });
-  list->addItem(selectMapsButton);
-
-  removeOfflineMapsButton = new ButtonControl(tr("Remove Offline Maps"), tr("REMOVE"), tr("Remove your downloaded offline maps to clear up storage space."));
-  QObject::connect(removeOfflineMapsButton, &ButtonControl::clicked, [this] { removeMaps(this); });
-  list->addItem(removeOfflineMapsButton);
-  removeOfflineMapsButton->setVisible(QDir(offlineFolderPath).exists());
-
-  navigationLayout->addWidget(new ScrollView(list, navigationWidget));
-  navigationWidget->setLayout(navigationLayout);
-  mainLayout->addWidget(navigationWidget);
-  mainLayout->setCurrentWidget(navigationWidget);
-
-  QObject::connect(uiState(), &UIState::uiUpdate, this, &FrogPilotNavigationPanel::updateState);
-
-  checkIfUpdateMissed();
-}
-
-void FrogPilotNavigationPanel::hideEvent(QHideEvent *event) {
-  QWidget::hideEvent(event);
-  mainLayout->setCurrentWidget(navigationWidget);
-}
-
-void FrogPilotNavigationPanel::updateState() {
-  if (!isVisible() && downloadActive) updateVisibility(downloadActive);
-  if (downloadActive) updateStatuses();
-  if (schedule) downloadSchedule();
-}
-
-void FrogPilotNavigationPanel::updateStatuses() {
-  static std::chrono::steady_clock::time_point startTime = std::chrono::steady_clock::now();
-  osmDownloadProgress = params.get("OSMDownloadProgress");
-
-  const int totalFiles = extractFromJson<int>(osmDownloadProgress, "\"total_files\":");
-  const int downloadedFiles = extractFromJson<int>(osmDownloadProgress, "\"downloaded_files\":");
-
-  if (paramsMemory.get("OSMDownloadLocations").empty()) {
-    downloadActive = false;
-    updateDownloadedLabel();
-    qint64 fileSize = calculateDirectorySize(offlineFolderPath);
-    offlineMapsSize->setText(formatSize(fileSize));
-    previousOSMDownloadProgress = osmDownloadProgress;
-  }
-
-  if (osmDownloadProgress != previousOSMDownloadProgress && isVisible()) {
-    qint64 fileSize = calculateDirectorySize(offlineFolderPath);
-    offlineMapsSize->setText(formatSize(fileSize));
-    previousOSMDownloadProgress = osmDownloadProgress;
-  }
-
-  elapsedTime = calculateElapsedTime(totalFiles, downloadedFiles, startTime);
-
-  offlineMapsElapsed->setText(elapsedTime);
-  offlineMapsETA->setText(calculateETA(totalFiles, downloadedFiles, startTime));
-  offlineMapsStatus->setText(formatDownloadStatus(totalFiles, downloadedFiles));
-
-  if (downloadActive != previousDownloadActive) {
-    startTime = !downloadActive ? std::chrono::steady_clock::now() : startTime;
-    updateVisibility(downloadActive);
-    previousDownloadActive = downloadActive;
-  }
-}
-
-void FrogPilotNavigationPanel::updateVisibility(bool visibility) {
-  cancelDownloadButton->setVisible(visibility);
-  offlineMapsElapsed->setVisible(visibility);
-  offlineMapsETA->setVisible(visibility);
-  offlineMapsStatus->setVisible(visibility);
-  downloadOfflineMapsButton->setVisible(!visibility);
-  lastMapsDownload->setVisible(QDir(offlineFolderPath).exists() && !downloadActive);
-  removeOfflineMapsButton->setVisible(QDir(offlineFolderPath).exists() && !downloadActive);
-  update();
-}
-
-void FrogPilotNavigationPanel::checkIfUpdateMissed() {
-  std::string lastMapsUpdate = params.get("LastMapsUpdate");
-
-  if (lastMapsUpdate.empty() || schedule == 0) {
-    return;
-  }
-
-  std::time_t currentTime = std::time(nullptr);
-  std::tm *now = std::localtime(&currentTime);
-
-  std::tm lastUpdate = {};
-  sscanf(lastMapsUpdate.c_str(), "%d-%d-%d", &lastUpdate.tm_year, &lastUpdate.tm_mon, &lastUpdate.tm_mday);
-  lastUpdate.tm_year -= 1900;
-  lastUpdate.tm_mon -= 1;
-
-  std::time_t lastUpdateTime = std::mktime(&lastUpdate);
-  std::tm *lastUpdateDay = std::localtime(&lastUpdateTime);
-
-  if (schedule == 1) {
-    schedulePending = (now->tm_wday == 0 && lastUpdateDay->tm_wday != 0) || (now->tm_wday > lastUpdateDay->tm_wday);
-  } else if (schedule == 2) {
-    schedulePending = (now->tm_mday == 1 && lastUpdate.tm_mday != 1) || (now->tm_mon != lastUpdate.tm_mon);
-  }
-}
-
-void FrogPilotNavigationPanel::updateDownloadedLabel() {
-  std::time_t t = std::time(nullptr);
-  std::tm now = *std::localtime(&t);
-  char dateBuffer[11];
-  std::strftime(dateBuffer, sizeof(dateBuffer), "%Y-%m-%d", &now);
-  QDate date = QDate::fromString(dateBuffer, "yyyy-MM-dd");
-
-  int day = date.day();
-  std::string suffix = (day == 1 || day == 21 || day == 31) ? "st" :
-                       (day == 2 || day == 22) ? "nd" :
-                       (day == 3 || day == 23) ? "rd" : "th";
-  std::string lastMapsUpdate = date.toString("MMMM d").toStdString() + suffix + date.toString(", yyyy").toStdString();
-  lastMapsDownload->setText(QString::fromStdString(lastMapsUpdate));
-  params.put("LastMapsUpdate", lastMapsUpdate);
-}
-
-void FrogPilotNavigationPanel::downloadSchedule() {
-  const bool wifi = (*uiState()->sm)["deviceState"].getDeviceState().getNetworkType() == cereal::DeviceState::NetworkType::WIFI;
-
-  const std::time_t t = std::time(nullptr);
-  const std::tm *now = std::localtime(&t);
-
-  const bool isScheduleTime = (schedule == 1 && now->tm_wday == 0) || (schedule == 2 && now->tm_mday == 1);
-
-  if ((isScheduleTime || schedulePending) && !(scene.started || scheduleCompleted) && wifi) {
-    downloadMaps();
-    scheduleCompleted = true;
-
-    if (schedulePending) {
-      schedulePending = false;
-      params.putBool("SchedulePending", false);
-    }
-  } else if (!isScheduleTime) {
-    scheduleCompleted = false;
-  } else {
-    if (!schedulePending) {
-      params.putBool("SchedulePending", true);
-    }
-    schedulePending = true;
-  }
-}
-
-void FrogPilotNavigationPanel::cancelDownload(QWidget *parent) {
-  if (FrogPilotConfirmationDialog::yesorno("Are you sure you want to cancel the download?", parent)) {
-    std::thread([&] {
-      std::system("pkill mapd");
-    }).detach();
-    if (FrogPilotConfirmationDialog::toggle("Reboot required to re-enable map downloads", "Reboot Now", parent)) {
-      Hardware::reboot();
-    }
-    downloadActive = false;
-    updateVisibility(downloadActive);
-    downloadOfflineMapsButton->setVisible(downloadActive);
-  }
-}
-
-void FrogPilotNavigationPanel::downloadMaps() {
-  params.remove("OSMDownloadProgress");
-  paramsMemory.put("OSMDownloadLocations", params.get("MapsSelected"));
-  removeOfflineMapsButton->setVisible(true);
-  downloadActive = true;
-}
-
-void FrogPilotNavigationPanel::removeMaps(QWidget *parent) {
-  if (FrogPilotConfirmationDialog::yesorno("Are you sure you want to delete all of your downloaded maps?", parent)) {
-    std::thread([&] {
-      lastMapsDownload->setVisible(false);
-      removeOfflineMapsButton->setVisible(false);
-      offlineMapsSize->setText(formatSize(0));
-      params.remove("LastMapsUpdate");
-      std::system("rm -rf /data/media/0/osm/offline");
-    }).detach();
-  }
-}
-
-void FrogPilotNavigationPanel::setMaps() {
-  std::thread([&] {
-    QStringList states = ButtonSelectionControl::selectedStates.split(',', QString::SkipEmptyParts);
-    QStringList countries = ButtonSelectionControl::selectedCountries.split(',', QString::SkipEmptyParts);
-
-    QJsonObject json;
-    json.insert("states", QJsonArray::fromStringList(states));
-    json.insert("nations", QJsonArray::fromStringList(countries));
-
-    params.put("MapsSelected", QJsonDocument(json).toJson(QJsonDocument::Compact).toStdString());
-
-    if (!states.isEmpty() || !countries.isEmpty()) {
-      downloadOfflineMapsButton->setVisible(true);
-      update();
-    } else {
-      params.remove("MapsSelected");
-    }
-  }).detach();
-}
-
-SelectMaps::SelectMaps(QWidget *parent) : QWidget(parent) {
-  QVBoxLayout *mainLayout = new QVBoxLayout(this);
-
-  QHBoxLayout *buttonsLayout = new QHBoxLayout();
-  buttonsLayout->setContentsMargins(20, 40, 20, 0);
-
-  backButton = new QPushButton(tr("Back"), this);
-  statesButton = new QPushButton(tr("States"), this);
-  countriesButton = new QPushButton(tr("Countries"), this);
-
-  backButton->setFixedSize(400, 100);
-  statesButton->setFixedSize(400, 100);
-  countriesButton->setFixedSize(400, 100);
-
-  buttonsLayout->addWidget(backButton);
-  buttonsLayout->addStretch();
-  buttonsLayout->addWidget(statesButton);
-  buttonsLayout->addStretch();
-  buttonsLayout->addWidget(countriesButton);
-  mainLayout->addLayout(buttonsLayout);
-
-  mainLayout->addWidget(horizontalLine());
-  mainLayout->setSpacing(20);
-
-  mapsLayout = new QStackedLayout();
-  mapsLayout->setMargin(40);
-  mapsLayout->setSpacing(20);
-  mainLayout->addLayout(mapsLayout);
-
-  QObject::connect(backButton, &QPushButton::clicked, this, [this]() { emit backPress(), emit setMaps(); });
-
-  FrogPilotListWidget *statesList = new FrogPilotListWidget();
-
-  LabelControl *northeastLabel = new LabelControl(tr("United States - Northeast"), "");
-  statesList->addItem(northeastLabel);
-
-  ButtonSelectionControl *northeastControl = new ButtonSelectionControl("", tr(""), tr(""), northeastMap, false);
-  statesList->addItem(northeastControl);
-
-  LabelControl *midwestLabel = new LabelControl(tr("United States - Midwest"), "");
-  statesList->addItem(midwestLabel);
-
-  ButtonSelectionControl *midwestControl = new ButtonSelectionControl("", tr(""), tr(""), midwestMap, false);
-  statesList->addItem(midwestControl);
-
-  LabelControl *southLabel = new LabelControl(tr("United States - South"), "");
-  statesList->addItem(southLabel);
-
-  ButtonSelectionControl *southControl = new ButtonSelectionControl("", tr(""), tr(""), southMap, false);
-  statesList->addItem(southControl);
-
-  LabelControl *westLabel = new LabelControl(tr("United States - West"), "");
-  statesList->addItem(westLabel);
-
-  ButtonSelectionControl *westControl = new ButtonSelectionControl("", tr(""), tr(""), westMap, false);
-  statesList->addItem(westControl);
-
-  LabelControl *territoriesLabel = new LabelControl(tr("United States - Territories"), "");
-  statesList->addItem(territoriesLabel);
-
-  ButtonSelectionControl *territoriesControl = new ButtonSelectionControl("", tr(""), tr(""), territoriesMap, false);
-  statesList->addItem(territoriesControl);
-
-  statesScrollView = new ScrollView(statesList);
-  mapsLayout->addWidget(statesScrollView);
-
-  QObject::connect(statesButton, &QPushButton::clicked, this, [this]() {
-    mapsLayout->setCurrentWidget(statesScrollView);
-    statesButton->setStyleSheet(activeButtonStyle);
-    countriesButton->setStyleSheet(normalButtonStyle);
-  });
-
-  FrogPilotListWidget *countriesList = new FrogPilotListWidget();
-
-  LabelControl *africaLabel = new LabelControl(tr("Africa"), "");
-  countriesList->addItem(africaLabel);
-
-  ButtonSelectionControl *africaControl = new ButtonSelectionControl("", tr(""), tr(""), africaMap, true);
-  countriesList->addItem(africaControl);
-
-  LabelControl *antarcticaLabel = new LabelControl(tr("Antarctica"), "");
-  countriesList->addItem(antarcticaLabel);
-
-  ButtonSelectionControl *antarcticaControl = new ButtonSelectionControl("", tr(""), tr(""), antarcticaMap, true);
-  countriesList->addItem(antarcticaControl);
-
-  LabelControl *asiaLabel = new LabelControl(tr("Asia"), "");
-  countriesList->addItem(asiaLabel);
-
-  ButtonSelectionControl *asiaControl = new ButtonSelectionControl("", tr(""), tr(""), asiaMap, true);
-  countriesList->addItem(asiaControl);
-
-  LabelControl *europeLabel = new LabelControl(tr("Europe"), "");
-  countriesList->addItem(europeLabel);
-
-  ButtonSelectionControl *europeControl = new ButtonSelectionControl("", tr(""), tr(""), europeMap, true);
-  countriesList->addItem(europeControl);
-
-  LabelControl *northAmericaLabel = new LabelControl(tr("North America"), "");
-  countriesList->addItem(northAmericaLabel);
-
-  ButtonSelectionControl *northAmericaControl = new ButtonSelectionControl("", tr(""), tr(""), northAmericaMap, true);
-  countriesList->addItem(northAmericaControl);
-
-  LabelControl *oceaniaLabel = new LabelControl(tr("Oceania"), "");
-  countriesList->addItem(oceaniaLabel);
-
-  ButtonSelectionControl *oceaniaControl = new ButtonSelectionControl("", tr(""), tr(""), oceaniaMap, true);
-  countriesList->addItem(oceaniaControl);
-
-  LabelControl *southAmericaLabel = new LabelControl(tr("South America"), "");
-  countriesList->addItem(southAmericaLabel);
-
-  ButtonSelectionControl *southAmericaControl = new ButtonSelectionControl("", tr(""), tr(""), southAmericaMap, true);
-  countriesList->addItem(southAmericaControl);
-
-  countriesScrollView = new ScrollView(countriesList);
-  mapsLayout->addWidget(countriesScrollView);
-
-  QObject::connect(countriesButton, &QPushButton::clicked, this, [this]() {
-    mapsLayout->setCurrentWidget(countriesScrollView);
-    statesButton->setStyleSheet(normalButtonStyle);
-    countriesButton->setStyleSheet(activeButtonStyle);
-  });
-
-  mapsLayout->setCurrentWidget(statesScrollView);
-  statesButton->setStyleSheet(activeButtonStyle);
-
-  setStyleSheet(R"(
-    QPushButton {
-      font-size: 50px;
-      margin: 0px;
-      padding: 15px;
-      border-width: 0;
-      border-radius: 30px;
-      color: #dddddd;
-      background-color: #393939;
-    }
-    QPushButton:pressed {
-      background-color: #4a4a4a;
-    }
-  )");
-}
-
-QString SelectMaps::activeButtonStyle = R"(
-  font-size: 50px;
-  margin: 0px;
-  padding: 15px;
-  border-width: 0;
-  border-radius: 30px;
-  color: #dddddd;
-  background-color: #33Ab4C;
-)";
-
-QString SelectMaps::normalButtonStyle = R"(
-  font-size: 50px;
-  margin: 0px;
-  padding: 15px;
-  border-width: 0;
-  border-radius: 30px;
-  color: #dddddd;
-  background-color: #393939;
-)";
-
-QFrame *SelectMaps::horizontalLine(QWidget *parent) const {
-  QFrame *line = new QFrame(parent);
-
-  line->setFrameShape(QFrame::StyledPanel);
-  line->setStyleSheet(R"(
-    border-width: 2px;
-    border-bottom-style: solid;
-    border-color: gray;
-  )");
-  line->setFixedHeight(2);
-
-  return line;
-}
-
-void SelectMaps::hideEvent(QHideEvent *event) {
-  QWidget::hideEvent(event);
-  emit setMaps();
-}
-
-Primeless::Primeless(QWidget *parent) : QWidget(parent) {
-  QStackedLayout *primelessLayout = new QStackedLayout(this);
-
-  QWidget *mainWidget = new QWidget();
-  mainLayout = new QVBoxLayout(mainWidget);
-  mainLayout->setMargin(40);
-
-  backButton = new QPushButton(tr("Back"), this);
-  backButton->setObjectName("backButton");
-  backButton->setFixedSize(400, 100);
-  QObject::connect(backButton, &QPushButton::clicked, this, [this]() { emit backPress(); });
-  mainLayout->addWidget(backButton, 0, Qt::AlignLeft);
-
-  list = new FrogPilotListWidget(mainWidget);
-
-  wifi = new WifiManager(this);
-  ipLabel = new LabelControl(tr("Manage Your Settings At"), QString("%1:8082").arg(wifi->getIp4Address()));
-  list->addItem(ipLabel);
-
-  std::vector<QString> searchOptions{tr("MapBox"), tr("Amap"), tr("Google")};
-  ButtonParamControl *searchInput = new ButtonParamControl("SearchInput", tr("Destination Search Provider"),
-                                       tr("Select a search provider for destination queries in Navigate on Openpilot. Options include MapBox (recommended), Amap, and Google Maps."),
-                                       "", searchOptions);
-  list->addItem(searchInput);
-
-  createMapboxKeyControl(publicMapboxKeyControl, tr("Public Mapbox Key"), "MapboxPublicKey", "pk.");
-  createMapboxKeyControl(secretMapboxKeyControl, tr("Secret Mapbox Key"), "MapboxSecretKey", "sk.");
-
-  mapboxPublicKeySet = !params.get("MapboxPublicKey").empty();
-  mapboxSecretKeySet = !params.get("MapboxSecretKey").empty();
-  setupCompleted = mapboxPublicKeySet && mapboxSecretKeySet;
-
-  QHBoxLayout *setupLayout = new QHBoxLayout();
-  setupLayout->setMargin(0);
-
-  imageLabel = new QLabel(this);
-  pixmap.load(currentStep);
-  imageLabel->setPixmap(pixmap.scaledToWidth(1500, Qt::SmoothTransformation));
-  setupLayout->addWidget(imageLabel, 0, Qt::AlignCenter);
-  imageLabel->hide();
-
-  ButtonControl *setupButton = new ButtonControl(tr("Mapbox Setup Instructions"), tr("VIEW"), tr("View the instructions to set up MapBox for Primeless Navigation."), this);
-  QObject::connect(setupButton, &ButtonControl::clicked, this, [this]() {
-    updateStep();
-    backButton->hide();
-    list->setVisible(false);
-    imageLabel->show();
-  });
-  list->addItem(setupButton);
-
-  QObject::connect(uiState(), &UIState::uiUpdate, this, &Primeless::updateState);
-
-  mainLayout->addLayout(setupLayout);
-  mainLayout->addWidget(new ScrollView(list, mainWidget));
-  mainWidget->setLayout(mainLayout);
-  primelessLayout->addWidget(mainWidget);
-
-  setLayout(primelessLayout);
-
-  setStyleSheet(R"(
-    QPushButton {
-      font-size: 50px;
-      margin: 0px;
-      padding: 15px;
-      border-width: 0;
-      border-radius: 30px;
-      color: #dddddd;
-      background-color: #393939;
-    }
-    QPushButton:pressed {
-      background-color: #4a4a4a;
-    }
-  )");
-}
-
-void Primeless::hideEvent(QHideEvent *event) {
-  QWidget::hideEvent(event);
-  backButton->show();
-  list->setVisible(true);
-  imageLabel->hide();
-}
-
-void Primeless::mousePressEvent(QMouseEvent *event) {
-  backButton->show();
-  list->setVisible(true);
-  imageLabel->hide();
-}
-
-void Primeless::updateState() {
-  if (!isVisible()) return;
-
-  QString ipAddress = wifi->getIp4Address();
-  ipLabel->setText(ipAddress.isEmpty() ? tr("Device Offline") : QString("%1:8082").arg(ipAddress));
-
-  mapboxPublicKeySet = !params.get("MapboxPublicKey").empty();
-  mapboxSecretKeySet = !params.get("MapboxSecretKey").empty();
-  setupCompleted = mapboxPublicKeySet && mapboxSecretKeySet && setupCompleted;
-
-  publicMapboxKeyControl->setText(mapboxPublicKeySet ? tr("REMOVE") : tr("ADD"));
-  secretMapboxKeyControl->setText(mapboxSecretKeySet ? tr("REMOVE") : tr("ADD"));
-
-  if (imageLabel->isVisible()) {
-    updateStep();
-  }
-}
-
-void Primeless::createMapboxKeyControl(ButtonControl *&control, const QString &label, const std::string &paramKey, const QString &prefix) {
-  control = new ButtonControl(label, "", tr("Manage your %1."), this);
-  QObject::connect(control, &ButtonControl::clicked, this, [this, control, label, paramKey, prefix] {
+void FrogPilotNavigationPanel::createMapboxKeyControl(ButtonControl *&control, const QString &label, const std::string &paramKey, const QString &prefix, FrogPilotListWidget *list) {
+  control = new ButtonControl(label, "", tr("Manage your %1.").arg(label));
+  QObject::connect(control, &ButtonControl::clicked, [=] {
     if (control->text() == tr("ADD")) {
-      QString key = InputDialog::getText(tr("Enter your %1").arg(label), this);
+      QString key = InputDialog::getText(tr("Enter your %1").arg(label), this).trimmed();
+
       if (!key.startsWith(prefix)) {
         key = prefix + key;
       }
       if (key.length() >= 80) {
         params.put(paramKey, key.toStdString());
+      } else {
+        ConfirmationDialog::alert(tr("Inputted key is invalid or too short!"), this);
       }
     } else {
-      params.remove(paramKey);
+      if (FrogPilotConfirmationDialog::yesorno(tr("Are you sure you want to remove your %1?").arg(label), this)) {
+        control->setText(tr("ADD"));
+
+        params.put(paramKey, "0");
+        params_cache.put(paramKey, "0");
+
+        setupCompleted = false;
+      }
     }
   });
+  control->setText(QString::fromStdString(params.get(paramKey)).startsWith(prefix) ? tr("REMOVE") : tr("ADD"));
   list->addItem(control);
-  control->setText(params.get(paramKey).empty() ? tr("ADD") : tr("REMOVE"));
 }
 
-void Primeless::updateStep() {
-  currentStep = setupCompleted ? "../frogpilot/navigation/navigation_training/setup_completed.png" :
-                (mapboxPublicKeySet && mapboxSecretKeySet) ? "../frogpilot/navigation/navigation_training/both_keys_set.png" :
-                mapboxPublicKeySet ? "../frogpilot/navigation/navigation_training/public_key_set.png" : "../frogpilot/navigation/navigation_training/no_keys_set.png";
+FrogPilotNavigationPanel::FrogPilotNavigationPanel(FrogPilotSettingsWindow *parent) : FrogPilotListWidget(parent), parent(parent) {
+  primelessLayout = new QStackedLayout();
+  addItem(primelessLayout);
 
+  FrogPilotListWidget *settingsList = new FrogPilotListWidget(this);
+  ipLabel = new LabelControl(tr("Manage Your Settings At"), tr("Device Offline"));
+  settingsList->addItem(ipLabel);
+
+  std::vector<QString> searchOptions{tr("MapBox"), tr("Amap"), tr("Google")};
+  FrogPilotButtonsControl *searchInput = new FrogPilotButtonsControl(tr("Destination Search Provider"),
+                                         tr("The search provider used for destination queries in \"Navigate on Openpilot\". "
+                                         "Options include \"MapBox\" (recommended), \"Amap\", and \"Google Maps\"."),
+                                         "", searchOptions, true);
+
+  QObject::connect(searchInput, &FrogPilotButtonsControl::buttonClicked, [this](int id) {
+    amapKeyControl1->setVisible(id == 1);
+    amapKeyControl2->setVisible(id == 1);
+
+    googleKeyControl->setVisible(id == 2);
+
+    params.putInt("SearchInput", id);
+    update();
+  });
+  searchInput->setCheckedButton(params.getInt("SearchInput"));
+  settingsList->addItem(searchInput);
+
+  amapKeyControl1 = new ButtonControl(tr("Amap Key #1"), "", tr("Manage your Amap key."));
+  QObject::connect(amapKeyControl1, &ButtonControl::clicked, [=] {
+    if (amapKeyControl1->text() == tr("ADD")) {
+      QString key = InputDialog::getText(tr("Enter your Amap key"), this).trimmed();
+
+      if (key.length() >= 39) {
+        params.put("AMapKey1", key.toStdString());
+      } else {
+        ConfirmationDialog::alert(tr("Inputted key is invalid or too short!"), this);
+      }
+    } else {
+      if (FrogPilotConfirmationDialog::yesorno(tr("Are you sure you want to remove your Amap key?"), this)) {
+        amapKeyControl1->setText(tr("ADD"));
+
+        params.put("AMapKey1", "0");
+        params_cache.put("AMapKey1", "0");
+      }
+    }
+  });
+  amapKeyControl1->setText(params.get("AMapKey1").empty() ? tr("ADD") : tr("REMOVE"));
+  settingsList->addItem(amapKeyControl1);
+
+  amapKeyControl2 = new ButtonControl(tr("Amap Key #2"), "", tr("Manage your Amap key."));
+  QObject::connect(amapKeyControl2, &ButtonControl::clicked, [=] {
+    if (amapKeyControl2->text() == tr("ADD")) {
+      QString key = InputDialog::getText(tr("Enter your Amap key"), this).trimmed();
+
+      if (key.length() >= 39) {
+        params.put("AMapKey2", key.toStdString());
+      } else {
+        ConfirmationDialog::alert(tr("Inputted key is invalid or too short!"), this);
+      }
+    } else {
+      if (FrogPilotConfirmationDialog::yesorno(tr("Are you sure you want to remove your Amap key?"), this)) {
+        amapKeyControl2->setText(tr("ADD"));
+
+        params.put("AMapKey2", "0");
+        params_cache.put("AMapKey2", "0");
+      }
+    }
+  });
+  amapKeyControl2->setText(params.get("AMapKey2").empty() ? tr("ADD") : tr("REMOVE"));
+  settingsList->addItem(amapKeyControl2);
+
+  googleKeyControl = new ButtonControl(tr("Google Maps Key"), "", tr("Manage your Google Maps key."));
+  QObject::connect(googleKeyControl, &ButtonControl::clicked, [=] {
+    if (googleKeyControl->text() == tr("ADD")) {
+      QString key = InputDialog::getText(tr("Enter your Google Maps key"), this).trimmed();
+
+      if (key.length() >= 25) {
+        params.put("GMapKey", key.toStdString());
+      } else {
+        ConfirmationDialog::alert(tr("Inputted key is invalid or too short!"), this);
+      }
+    } else {
+      if (FrogPilotConfirmationDialog::yesorno(tr("Are you sure you want to remove your Google Maps key?"), this)) {
+        googleKeyControl->setText(tr("ADD"));
+
+        params.put("GMapKey", "0");
+        params_cache.put("GMapKey", "0");
+      }
+    }
+  });
+  googleKeyControl->setText(params.get("GMapKey").empty() ? tr("ADD") : tr("REMOVE"));
+  settingsList->addItem(googleKeyControl);
+
+  createMapboxKeyControl(publicMapboxKeyControl, tr("Public Mapbox Key"), "MapboxPublicKey", "pk.", settingsList);
+  createMapboxKeyControl(secretMapboxKeyControl, tr("Secret Mapbox Key"), "MapboxSecretKey", "sk.", settingsList);
+
+  ButtonControl *setupButton = new ButtonControl(tr("MapBox Setup Instructions"), tr("VIEW"), tr("View the instructions to set up \"MapBox\" for \"Primeless Navigation\"."), this);
+  QObject::connect(setupButton, &ButtonControl::clicked, [this]() {
+    openMapBoxInstructions();
+    updateStep();
+
+    primelessLayout->setCurrentIndex(1);
+  });
+  settingsList->addItem(setupButton);
+
+  ScrollView *settingsPanel = new ScrollView(settingsList, this);
+  primelessLayout->addWidget(settingsPanel);
+
+  imageLabel = new QLabel(this);
+
+  ScrollView *instructionsPanel = new ScrollView(imageLabel, this);
+  primelessLayout->addWidget(instructionsPanel);
+
+  QObject::connect(parent, &FrogPilotSettingsWindow::closeMapBoxInstructions, [this] {primelessLayout->setCurrentIndex(0);});
+  QObject::connect(uiState(), &UIState::uiUpdate, this, &FrogPilotNavigationPanel::updateState);
+}
+
+void FrogPilotNavigationPanel::showEvent(QShowEvent *event) {
+  QString ipAddress = uiState()->wifi->getIp4Address();
+  ipLabel->setText(ipAddress.isEmpty() ? tr("Device Offline") : QString("%1:8082").arg(ipAddress));
+
+  updateButtons();
+
+  setupCompleted = mapboxPublicKeySet && mapboxSecretKeySet;
+
+  int searchInput = params.getInt("SearchInput");
+
+  amapKeyControl1->setVisible(searchInput == 1);
+  amapKeyControl2->setVisible(searchInput == 1);
+
+  googleKeyControl->setVisible(searchInput == 2);
+}
+
+void FrogPilotNavigationPanel::hideEvent(QHideEvent *event) {
+  primelessLayout->setCurrentIndex(0);
+}
+
+void FrogPilotNavigationPanel::mousePressEvent(QMouseEvent *event) {
+  if (primelessLayout->currentIndex() == 1) {
+    closeMapBoxInstructions();
+
+    primelessLayout->setCurrentIndex(0);
+  }
+}
+
+void FrogPilotNavigationPanel::updateButtons() {
+  amapKeyControl1->setText(params.get("AMapKey1").empty() ? tr("ADD") : tr("REMOVE"));
+  amapKeyControl2->setText(params.get("AMapKey2").empty() ? tr("ADD") : tr("REMOVE"));
+
+  googleKeyControl->setText(params.get("GMapKey").empty() ? tr("ADD") : tr("REMOVE"));
+
+  mapboxPublicKeySet = QString::fromStdString(params.get("MapboxPublicKey")).startsWith("pk");
+  mapboxSecretKeySet = QString::fromStdString(params.get("MapboxSecretKey")).startsWith("sk");
+
+  publicMapboxKeyControl->setText(mapboxPublicKeySet ? tr("REMOVE") : tr("ADD"));
+  secretMapboxKeyControl->setText(mapboxSecretKeySet ? tr("REMOVE") : tr("ADD"));
+}
+
+void FrogPilotNavigationPanel::updateState(const UIState &s) {
+  if (!isVisible() || s.sm->frame % (UI_FREQ / 2) != 0) {
+    return;
+  }
+
+  updateButtons();
+  updateStep();
+
+  parent->keepScreenOn = primelessLayout->currentIndex() == 1;
+}
+
+void FrogPilotNavigationPanel::updateStep() {
+  QString currentStep;
+  if (setupCompleted) {
+    currentStep = "../frogpilot/navigation/navigation_training/setup_completed.png";
+  } else if (mapboxPublicKeySet && mapboxSecretKeySet) {
+    currentStep = "../frogpilot/navigation/navigation_training/both_keys_set.png";
+  } else if (mapboxPublicKeySet) {
+    currentStep = "../frogpilot/navigation/navigation_training/public_key_set.png";
+  } else {
+    currentStep = "../frogpilot/navigation/navigation_training/no_keys_set.png";
+  }
+
+  QPixmap pixmap;
   pixmap.load(currentStep);
   imageLabel->setPixmap(pixmap.scaledToWidth(1500, Qt::SmoothTransformation));
+
+  update();
 }

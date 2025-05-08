@@ -3,7 +3,9 @@
 #include <memory>
 
 #include <QFrame>
+#include <QLabel>
 #include <QMap>
+#include <QMovie>
 
 #include "selfdrive/ui/ui.h"
 
@@ -65,22 +67,44 @@ protected:
 private:
   std::unique_ptr<PubMaster> pm;
 
+  // FrogPilot widgets
+  void showEvent(QShowEvent *event);
+  void updateIcon(QLabel *&label, QMovie *&gif, const QString &gifPath, const QRect &btnRect, const QString &pngPath, bool &isGif);
+  void updateIcons();
+
   // FrogPilot variables
   Params params;
-  UIScene &scene;
 
   ItemStatus cpu_status, memory_status, storage_status;
 
   bool isCPU;
+  bool isFahrenheit;
   bool isGPU;
+  bool isHomeGif;
   bool isIP;
   bool isMemoryUsage;
+  bool isNumericalTemp;
+  bool isRandomEvents;
+  bool isSettingsGif;
+  bool isSidebarMetrics;
   bool isStorageLeft;
   bool isStorageUsed;
 
-  std::unordered_map<int, std::pair<QString, std::vector<QColor>>> themeConfiguration;
-  std::unordered_map<int, QPixmap> flag_imgs;
-  std::unordered_map<int, QPixmap> home_imgs;
-  std::unordered_map<int, QPixmap> settings_imgs;
-  std::vector<QColor> currentColors;
+  QColor sidebar_color1;
+  QColor sidebar_color2;
+  QColor sidebar_color3;
+
+  QLabel *home_label;
+  QLabel *settings_label;
+
+  QMovie *home_gif;
+  QMovie *settings_gif;
+
+  QString flagPngPath;
+  QString homeGifPath;
+  QString homePngPath;
+  QString max_temp;
+  QString randomEventGifPath;
+  QString settingsGifPath;
+  QString settingsPngPath;
 };

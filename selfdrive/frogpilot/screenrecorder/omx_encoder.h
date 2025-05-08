@@ -15,7 +15,7 @@ extern "C" {
 // OmxEncoder, lossey codec using hardware hevc
 class OmxEncoder {
 public:
-  OmxEncoder(const char* path, int width, int height, int fps, int bitrate, bool h265, bool downscale);
+  OmxEncoder(const char* path, int width, int height, int fps, int bitrate);
   ~OmxEncoder();
 
   int encode_frame_rgba(const uint8_t *ptr, int in_width, int in_height, uint64_t ts);
@@ -63,10 +63,5 @@ private:
   SafeQueue<OMX_BUFFERHEADERTYPE *> done_out;
 
   AVFormatContext *ofmt_ctx;
-  AVCodecContext *codec_ctx;
   AVStream *out_stream;
-  bool remuxing;
-
-  bool downscale;
-  uint8_t *y_ptr2, *u_ptr2, *v_ptr2;
 };

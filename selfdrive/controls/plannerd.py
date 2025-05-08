@@ -6,7 +6,7 @@ from openpilot.common.swaglog import cloudlog
 from openpilot.selfdrive.controls.lib.longitudinal_planner import LongitudinalPlanner
 import cereal.messaging as messaging
 
-from openpilot.selfdrive.frogpilot.functions.frogpilot_planner import FrogPilotPlanner
+from openpilot.selfdrive.frogpilot.frogpilot_variables import get_frogpilot_toggles
 
 def publish_ui_plan(sm, pm, longitudinal_planner):
   ui_send = messaging.new_message('uiPlan')
@@ -24,26 +24,32 @@ def plannerd_thread():
 
   cloudlog.info("plannerd is waiting for CarParams")
   params = Params()
-  params_memory = Params("/dev/shm/params")
   with car.CarParams.from_bytes(params.get("CarParams", block=True)) as msg:
     CP = msg
   cloudlog.info("plannerd got CarParams: %s", CP.carName)
 
-  frogpilot_planner = FrogPilotPlanner(CP, params, params_memory)
   longitudinal_planner = LongitudinalPlanner(CP)
-  pm = messaging.PubMaster(['longitudinalPlan', 'uiPlan', 'frogpilotPlan'])
-  sm = messaging.SubMaster(['carControl', 'carState', 'controlsState', 'radarState', 'modelV2', 'frogpilotNavigation'],
+  pm = messaging.PubMaster(['longitudinalPlan', 'uiPlan'])
+  sm = messaging.SubMaster(['carControl', 'carState', 'controlsState', 'liveParameters', 'radarState', 'modelV2',
+                            'frogpilotCarState', 'frogpilotPlan'],
                            poll='modelV2', ignore_avg_freq=['radarState'])
+
+  # FrogPilot variables
+  frogpilot_toggles = get_frogpilot_toggles()
+
+  classic_model = frogpilot_toggles.classic_model
+  radarless_model = frogpilot_toggles.radarless_model
 
   while True:
     sm.update()
     if sm.updated['modelV2']:
-      longitudinal_planner.update(sm, frogpilot_planner, params_memory)
-      longitudinal_planner.publish(sm, pm, frogpilot_planner)
+      longitudinal_planner.update(radarless_model, sm, frogpilot_toggles)
+      longitudinal_planner.publish(classic_model, sm, pm, frogpilot_toggles)
       publish_ui_plan(sm, pm, longitudinal_planner)
 
-    if params_memory.get_bool("FrogPilotTogglesUpdated"):
-      frogpilot_planner.update_frogpilot_params(params)
+    # Update FrogPilot parameters
+    if sm['frogpilotPlan'].togglesUpdated:
+      frogpilot_toggles = get_frogpilot_toggles()
 
 def main():
   plannerd_thread()

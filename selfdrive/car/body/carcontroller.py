@@ -4,6 +4,7 @@ from openpilot.common.realtime import DT_CTRL
 from opendbc.can.packer import CANPacker
 from openpilot.selfdrive.car.body import bodycan
 from openpilot.selfdrive.car.body.values import SPEED_FROM_RPM
+from openpilot.selfdrive.car.interfaces import CarControllerBase
 from openpilot.selfdrive.controls.lib.pid import PIDController
 
 
@@ -14,7 +15,7 @@ MAX_POS_INTEGRATOR = 0.2   # meters
 MAX_TURN_INTEGRATOR = 0.1  # meters
 
 
-class CarController:
+class CarController(CarControllerBase):
   def __init__(self, dbc_name, CP, VM):
     self.frame = 0
     self.packer = CANPacker(dbc_name)
@@ -34,13 +35,12 @@ class CarController:
       torque -= deadband
     return torque
 
-  def update(self, CC, CS, now_nanos, frogpilot_variables):
+  def update(self, CC, CS, now_nanos, frogpilot_toggles):
 
     torque_l = 0
     torque_r = 0
 
-    llk_valid = len(CC.orientationNED) > 1 and len(CC.angularVelocity) > 1
-    if CC.enabled and llk_valid:
+    if CC.enabled:
       # Read these from the joystick
       # TODO: this isn't acceleration, okay?
       speed_desired = CC.actuators.accel / 5.
@@ -74,7 +74,7 @@ class CarController:
     can_sends = []
     can_sends.append(bodycan.create_control(self.packer, torque_l, torque_r))
 
-    new_actuators = CC.actuators.copy()
+    new_actuators = CC.actuators.as_builder()
     new_actuators.accel = torque_l
     new_actuators.steer = torque_r
     new_actuators.steerOutputCan = torque_r

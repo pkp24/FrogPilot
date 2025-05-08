@@ -4,11 +4,11 @@ import time
 import numpy as np
 from cereal import log
 from openpilot.common.numpy_fast import clip
+from openpilot.common.realtime import DT_MDL
 from openpilot.common.swaglog import cloudlog
 # WARNING: imports outside of constants will not trigger a rebuild
 from openpilot.selfdrive.modeld.constants import index_function
 from openpilot.selfdrive.car.interfaces import ACCEL_MIN
-from openpilot.selfdrive.controls.radard import _LEAD_ACCEL_TAU
 
 if __name__ == '__main__':  # generating code
   from openpilot.third_party.acados.acados_template import AcadosModel, AcadosOcp, AcadosOcpSolver
@@ -42,6 +42,8 @@ CRASH_DISTANCE = .25
 LEAD_DANGER_FACTOR = 0.75
 LIMIT_COST = 1e6
 ACADOS_SOLVER_TYPE = 'SQP_RTI'
+# Default lead acceleration decay set to 50% at 1s
+LEAD_ACCEL_TAU = 1.5
 
 
 # Fewer timestamps don't hurt performance and lead to
@@ -56,28 +58,31 @@ T_DIFFS = np.diff(T_IDXS, prepend=[0.])
 COMFORT_BRAKE = 2.5
 STOP_DISTANCE = 6.0
 
-def get_jerk_factor(custom_personalities=False, aggressive_jerk=0.5, standard_jerk=1.0, relaxed_jerk=1.0, personality=log.LongitudinalPersonality.standard):
+def get_jerk_factor(aggressive_jerk_acceleration=0.5, aggressive_jerk_danger=0.5, aggressive_jerk_speed=0.5,
+                    standard_jerk_acceleration=1.0, standard_jerk_danger=1.0, standard_jerk_speed=1.0,
+                    relaxed_jerk_acceleration=1.0, relaxed_jerk_danger=1.0, relaxed_jerk_speed=1.0,
+                    custom_personalities=False, personality=log.LongitudinalPersonality.standard):
   if custom_personalities:
     if personality==log.LongitudinalPersonality.relaxed:
-      return relaxed_jerk
+      return relaxed_jerk_acceleration, relaxed_jerk_danger, relaxed_jerk_speed
     elif personality==log.LongitudinalPersonality.standard:
-      return standard_jerk
+      return standard_jerk_acceleration, standard_jerk_danger, standard_jerk_speed
     elif personality==log.LongitudinalPersonality.aggressive:
-      return aggressive_jerk
+      return aggressive_jerk_acceleration, aggressive_jerk_danger, aggressive_jerk_speed
     else:
       raise NotImplementedError("Longitudinal personality not supported")
   else:
     if personality==log.LongitudinalPersonality.relaxed:
-      return 1.0
+      return 1.0, 1.0, 1.0
     elif personality==log.LongitudinalPersonality.standard:
-      return 1.0
+      return 1.0, 1.0, 1.0
     elif personality==log.LongitudinalPersonality.aggressive:
-      return 0.5
+      return 0.5, 0.5, 0.5
     else:
       raise NotImplementedError("Longitudinal personality not supported")
 
 
-def get_T_FOLLOW(custom_personalities=False, aggressive_follow=1.25, standard_follow=1.45, relaxed_follow=1.75, personality=log.LongitudinalPersonality.standard):
+def get_T_FOLLOW(aggressive_follow=1.25, standard_follow=1.45, relaxed_follow=1.75, custom_personalities=False, personality=log.LongitudinalPersonality.standard):
   if custom_personalities:
     if personality==log.LongitudinalPersonality.relaxed:
       return relaxed_follow
@@ -240,12 +245,9 @@ def gen_long_ocp():
 
 
 class LongitudinalMpc:
-  def __init__(self, mode='acc'):
-    # FrogPilot variables
-    self.acceleration_offset = 1
-    self.braking_offset = 1
-
+  def __init__(self, mode='acc', dt=DT_MDL):
     self.mode = mode
+    self.dt = dt
     self.solver = AcadosOcpSolverCython(MODEL_NAME, ACADOS_SOLVER_TYPE, N)
     self.reset()
     self.source = SOURCES[2]
@@ -295,14 +297,11 @@ class LongitudinalMpc:
     for i in range(N):
       self.solver.cost_set(i, 'Zl', Zl)
 
-  def set_weights(self, prev_accel_constraint=True, custom_personalities=False, aggressive_jerk=0.5, standard_jerk=1.0, relaxed_jerk=1.0, personality=log.LongitudinalPersonality.standard):
-    jerk_factor = get_jerk_factor(custom_personalities, aggressive_jerk, standard_jerk, relaxed_jerk, personality)
-    jerk_factor /= np.mean(self.acceleration_offset + self.braking_offset)
-
+  def set_weights(self, acceleration_jerk=1.0, danger_jerk=1.0, speed_jerk=1.0, prev_accel_constraint=True, personality=log.LongitudinalPersonality.standard):
     if self.mode == 'acc':
-      a_change_cost = A_CHANGE_COST if prev_accel_constraint else 0
-      cost_weights = [X_EGO_OBSTACLE_COST, X_EGO_COST, V_EGO_COST, A_EGO_COST, jerk_factor * a_change_cost, jerk_factor * J_EGO_COST]
-      constraint_cost_weights = [LIMIT_COST, LIMIT_COST, LIMIT_COST, DANGER_ZONE_COST]
+      a_change_cost = acceleration_jerk if prev_accel_constraint else 0
+      cost_weights = [X_EGO_OBSTACLE_COST, X_EGO_COST, V_EGO_COST, A_EGO_COST, a_change_cost, speed_jerk]
+      constraint_cost_weights = [LIMIT_COST, LIMIT_COST, LIMIT_COST, danger_jerk]
     elif self.mode == 'blended':
       a_change_cost = 40.0 if prev_accel_constraint else 0
       cost_weights = [0., 0.1, 0.2, 5.0, a_change_cost, 1.0]
@@ -327,10 +326,10 @@ class LongitudinalMpc:
     lead_xv = np.column_stack((x_lead_traj, v_lead_traj))
     return lead_xv
 
-  def process_lead(self, lead, increased_stopping_distance):
+  def process_lead(self, lead):
     v_ego = self.x0[1]
     if lead is not None and lead.status:
-      x_lead = lead.dRel - increased_stopping_distance
+      x_lead = lead.dRel
       v_lead = lead.vLead
       a_lead = lead.aLeadK
       a_lead_tau = lead.aLeadTau
@@ -339,7 +338,7 @@ class LongitudinalMpc:
       x_lead = 50.0
       v_lead = v_ego + 10.0
       a_lead = 0.0
-      a_lead_tau = _LEAD_ACCEL_TAU
+      a_lead_tau = LEAD_ACCEL_TAU
 
     # MPC will not converge if immediate crash is expected
     # Clip lead distance to what is still possible to brake for
@@ -356,41 +355,12 @@ class LongitudinalMpc:
     self.cruise_min_a = min_a
     self.max_a = max_a
 
-  def update(self, radarstate, v_cruise, x, v, a, j, frogpilot_planner, personality=log.LongitudinalPersonality.standard):
-    t_follow = get_T_FOLLOW(frogpilot_planner.custom_personalities, frogpilot_planner.aggressive_follow, frogpilot_planner.standard_follow, frogpilot_planner.relaxed_follow, personality)
-    self.t_follow = t_follow
+  def update(self, lead_one, lead_two, v_cruise, x, v, a, j, radarless_model, t_follow, trafficMode, personality=log.LongitudinalPersonality.standard):
     v_ego = self.x0[1]
-    self.status = radarstate.leadOne.status or radarstate.leadTwo.status
+    self.status = lead_one.status or lead_two.status
 
-    lead_xv_0 = self.process_lead(radarstate.leadOne, frogpilot_planner.increased_stopping_distance)
-    lead_xv_1 = self.process_lead(radarstate.leadTwo, frogpilot_planner.increased_stopping_distance)
-
-    # Offset by FrogAi for FrogPilot for a more natural takeoff with a lead
-    if frogpilot_planner.aggressive_acceleration:
-      distance_factor = np.maximum(1, lead_xv_0[:,0] - (lead_xv_0[:,1] * t_follow))
-      standstill_offset = max(STOP_DISTANCE - (v_ego**COMFORT_BRAKE), 0)
-      self.acceleration_offset = np.clip((lead_xv_0[:,1] - v_ego) + standstill_offset - COMFORT_BRAKE, 1, distance_factor)
-      t_follow = t_follow / self.acceleration_offset
-    else:
-      self.acceleration_offset = 1
-
-    # Offset by FrogAi for FrogPilot for a more natural approach to a slower lead
-    if frogpilot_planner.smoother_braking:
-      distance_factor = np.maximum(1, lead_xv_0[:,0] - (lead_xv_0[:,1] * t_follow))
-      self.braking_offset = np.clip((v_ego - lead_xv_0[:,1]) - COMFORT_BRAKE, 1, distance_factor)
-      t_follow = t_follow / self.braking_offset
-    else:
-      self.braking_offset = 1
-
-    # LongitudinalPlan variables for onroad driving insights
-    if self.status:
-      self.safe_obstacle_distance = int(np.mean(get_safe_obstacle_distance(v_ego, t_follow)))
-      self.safe_obstacle_distance_stock = int(np.mean(get_safe_obstacle_distance(v_ego, self.t_follow)))
-      self.stopped_equivalence_factor = int(np.mean(get_stopped_equivalence_factor(lead_xv_0[:,1])))
-    else:
-      self.safe_obstacle_distance = 0
-      self.safe_obstacle_distance_stock = 0
-      self.stopped_equivalence_factor = 0
+    lead_xv_0 = self.process_lead(lead_one)
+    lead_xv_1 = self.process_lead(lead_two)
 
     # To estimate a safe distance from a moving lead, we calculate how much stopping
     # distance that lead needs as a minimum. We can add that to the current distance
@@ -399,7 +369,8 @@ class LongitudinalMpc:
     lead_1_obstacle = lead_xv_1[:,0] + get_stopped_equivalence_factor(lead_xv_1[:,1])
 
     self.params[:,0] = ACCEL_MIN
-    self.params[:,1] = self.max_a
+    # negative accel constraint causes problems because negative speed is not allowed
+    self.params[:,1] = max(0.0, self.max_a)
 
     # Update in ACC mode or ACC/e2e blend
     if self.mode == 'acc':
@@ -408,6 +379,7 @@ class LongitudinalMpc:
       # Fake an obstacle for cruise, this ensures smooth acceleration to set speed
       # when the leads are no factor.
       v_lower = v_ego + (T_IDXS * self.cruise_min_a * 1.05)
+      # TODO does this make sense when max_a is negative?
       v_upper = v_ego + (T_IDXS * self.max_a * 1.05)
       v_cruise_clipped = np.clip(v_cruise * np.ones(N+1),
                                  v_lower,
@@ -449,8 +421,8 @@ class LongitudinalMpc:
     self.params[:,4] = t_follow
 
     self.run()
-    if (np.any(lead_xv_0[FCW_IDXS,0] - self.x_sol[FCW_IDXS,0] < CRASH_DISTANCE) and
-            radarstate.leadOne.modelProb > 0.9):
+    lead_probability = lead_one.prob if radarless_model else lead_one.modelProb
+    if (np.any(lead_xv_0[FCW_IDXS,0] - self.x_sol[FCW_IDXS,0] < CRASH_DISTANCE) and lead_probability > 0.9):
       self.crash_cnt += 1
     else:
       self.crash_cnt = 0
@@ -494,7 +466,7 @@ class LongitudinalMpc:
     self.a_solution = self.x_sol[:,2]
     self.j_solution = self.u_sol[:,0]
 
-    self.prev_a = np.interp(T_IDXS + 0.05, T_IDXS, self.a_solution)
+    self.prev_a = np.interp(T_IDXS + self.dt, T_IDXS, self.a_solution)
 
     t = time.monotonic()
     if self.solution_status != 0:

@@ -10,9 +10,9 @@ const SteeringLimits GM_STEERING_LIMITS = {
 };
 
 const LongitudinalLimits GM_ASCM_LONG_LIMITS = {
-  .max_gas = 3072,
-  .min_gas = 1404,
-  .inactive_gas = 1404,
+  .max_gas = 7168,
+  .min_gas = 5500,
+  .inactive_gas = 5500,
   .max_brake = 400,
 };
 
@@ -24,9 +24,9 @@ const LongitudinalLimits GM_ASCM_LONG_LIMITS_SPORT = {
 };
 
 const LongitudinalLimits GM_CAM_LONG_LIMITS = {
-  .max_gas = 3400,
-  .min_gas = 1514,
-  .inactive_gas = 1554,
+  .max_gas = 7496,
+  .min_gas = 5610,
+  .inactive_gas = 5650,
   .max_brake = 400,
 };
 
@@ -43,13 +43,12 @@ const int GM_STANDSTILL_THRSLD = 10;  // 0.311kph
 
 // panda interceptor threshold needs to be equivalent to openpilot threshold to avoid controls mismatches
 // If thresholds are mismatched then it is possible for panda to see the gas fall and rise while openpilot is in the pre-enabled state
-const int GM_GAS_INTERCEPTOR_THRESHOLD = 515; // (610 + 306.25) / 2 ratio between offset and gain from dbc file
+const int GM_GAS_INTERCEPTOR_THRESHOLD = 515; // (675 + 355) / 2 ratio between offset and gain from dbc file
 #define GM_GET_INTERCEPTOR(msg) (((GET_BYTE((msg), 0) << 8) + GET_BYTE((msg), 1) + (GET_BYTE((msg), 2) << 8) + GET_BYTE((msg), 3)) / 2U) // avg between 2 tracks
 
 const CanMsg GM_ASCM_TX_MSGS[] = {{0x180, 0, 4}, {0x409, 0, 7}, {0x40A, 0, 7}, {0x2CB, 0, 8}, {0x370, 0, 6}, {0x200, 0, 6},  // pt bus
                                   {0xA1, 1, 7}, {0x306, 1, 8}, {0x308, 1, 7}, {0x310, 1, 2},   // obs bus
-                                  {0x315, 2, 5},  // ch bus
-                                  {0x104c006c, 3, 3}, {0x10400060, 3, 5}};  // gmlan
+                                  {0x315, 2, 5}};  // ch bus
 
 const CanMsg GM_CAM_TX_MSGS[] = {{0x180, 0, 4}, {0x200, 0, 6}, {0x1E1, 0, 7},  // pt bus
                                  {0x1E1, 2, 7}, {0x184, 2, 8}};  // camera bus
@@ -92,7 +91,12 @@ enum {
   GM_BTN_CANCEL = 6,
 };
 
-enum {GM_ASCM, GM_CAM, GM_SDGM} gm_hw = GM_ASCM;
+typedef enum {
+  GM_ASCM,
+  GM_CAM,
+  GM_SDGM
+} GmHardware;
+GmHardware gm_hw = GM_ASCM;
 bool gm_cam_long = false;
 bool gm_pcm_cruise = false;
 bool gm_has_acc = true;
@@ -124,7 +128,6 @@ static void gm_rx_hook(const CANPacket_t *to_push) {
     // SDGM buttons are on bus 2
     handle_gm_wheel_buttons(to_push);
   }
-
   if (GET_BUS(to_push) == 0U) {
     int addr = GET_ADDR(to_push);
 
@@ -154,8 +157,11 @@ static void gm_rx_hook(const CANPacket_t *to_push) {
     }
 
     if ((addr == 0xC9) && ((gm_hw == GM_CAM) || (gm_hw == GM_SDGM))) {
-      acc_main_on = GET_BIT(to_push, 29U);
-      brake_pressed = GET_BIT(to_push, 40U);
+      brake_pressed = GET_BIT(to_push, 40U) != 0U;
+    }
+
+    if (addr == 0xC9) {
+      acc_main_on = GET_BIT(to_push, 29U) != 0U;
     }
 
     if (addr == 0x1C4) {
@@ -312,7 +318,7 @@ static safety_config gm_init(uint16_t param) {
     } else {
       gm_long_limits = &GM_ASCM_LONG_LIMITS;
     }
-  } else if (gm_hw == GM_CAM) {
+  } else if ((gm_hw == GM_CAM) || (gm_hw == GM_SDGM)) {
     if (sport_mode) {
       gm_long_limits = &GM_CAM_LONG_LIMITS_SPORT;
     } else {

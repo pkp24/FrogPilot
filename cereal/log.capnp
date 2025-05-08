@@ -29,6 +29,7 @@ struct InitData {
   osVersion @18 :Text;
 
   dongleId @2 :Text;
+  bootlogId @22 :Text;
 
   deviceType @3 :DeviceType;
   version @4 :Text;
@@ -57,6 +58,7 @@ struct InitData {
     tici @4;
     pc @5;
     tizi @6;
+    mici @7;
   }
 
   struct PandaInfo {
@@ -197,6 +199,13 @@ struct Thumbnail {
   frameId @0 :UInt32;
   timestampEof @1 :UInt64;
   thumbnail @2 :Data;
+  encoding @3 :Encoding;
+
+  enum Encoding {
+    unknown @0;
+    jpeg @1;
+    keyframe @2;
+  }
 }
 
 struct GPSNMEAData {
@@ -250,7 +259,7 @@ struct SensorEventData {
 
 # android struct GpsLocation
 struct GpsLocationData {
-  # Contains GpsLocationFlags bits.
+  # Contains module-specific flags.
   flags @0 :UInt16;
 
   # Represents latitude in degrees.
@@ -268,8 +277,8 @@ struct GpsLocationData {
   # Represents heading in degrees.
   bearingDeg @5 :Float32;
 
-  # Represents expected accuracy in meters. (presumably 1 sigma?)
-  accuracy @6 :Float32;
+  # Represents expected horizontal accuracy in meters.
+  horizontalAccuracy @6 :Float32;
 
   unixTimestampMillis @7 :Int64;
 
@@ -287,6 +296,8 @@ struct GpsLocationData {
   # Represents velocity accuracy in m/s. (presumably 1 sigma?)
   speedAccuracy @12 :Float32;
 
+  hasFix @13 :Bool;
+
   enum SensorSource {
     android @0;
     iOS @1;
@@ -297,6 +308,7 @@ struct GpsLocationData {
     ublox @6;
     trimble @7;
     qcomdiag @8;
+    unicore @9;
   }
 }
 
@@ -337,6 +349,8 @@ struct CanData {
 }
 
 struct DeviceState @0xa4d8b5af2aa492eb {
+  deviceType @45 :InitData.DeviceType;
+
   networkType @22 :NetworkType;
   networkInfo @31 :NetworkInfo;
   networkStrength @24 :NetworkStrength;
@@ -442,7 +456,6 @@ struct PandaState @0xa7649e2575e4591e {
   ignitionLine @2 :Bool;
   rxBufferOverflow @7 :UInt32;
   txBufferOverflow @8 :UInt32;
-  gmlanSendErrs @9 :UInt32;
   pandaType @10 :PandaType;
   ignitionCan @13 :Bool;
   faultStatus @15 :FaultStatus;
@@ -490,7 +503,7 @@ struct PandaState @0xa7649e2575e4591e {
     interruptRateCan2 @3;
     interruptRateCan3 @4;
     interruptRateTach @5;
-    interruptRateGmlan @6;
+    interruptRateGmlanDEPRECATED @6;
     interruptRateInterrupts @7;
     interruptRateSpiDma @8;
     interruptRateSpiCs @9;
@@ -576,6 +589,7 @@ struct PandaState @0xa7649e2575e4591e {
   gasInterceptorDetectedDEPRECATED @4 :Bool;
   startedSignalDetectedDEPRECATED @5 :Bool;
   hasGpsDEPRECATED @6 :Bool;
+  gmlanSendErrsDEPRECATED @9 :UInt32;
   fanSpeedRpmDEPRECATED @11 :UInt16;
   usbPowerModeDEPRECATED @12 :PeripheralState.UsbPowerModeDEPRECATED;
   safetyParamDEPRECATED @20 :Int16;
@@ -604,6 +618,8 @@ struct RadarState @0x9a185389d6fdd05f {
 
   leadOne @3 :LeadData;
   leadTwo @4 :LeadData;
+  leadLeft @13 :LeadData;
+  leadRight @14 :LeadData;
   cumLagMs @5 :Float32;
 
   struct LeadData {
@@ -687,6 +703,7 @@ struct ControlsState @0x97ff69c53601abf1 {
   active @36 :Bool;
 
   experimentalMode @64 :Bool;
+  personality @66 :LongitudinalPersonality;
 
   longControlState @30 :Car.CarControl.Actuators.LongControlState;
   vPid @2 :Float32;
@@ -712,7 +729,6 @@ struct ControlsState @0x97ff69c53601abf1 {
   engageable @41 :Bool;  # can OP be engaged?
 
   cumLagMs @15 :Float32;
-  canErrorCounter @57 :UInt32;
 
   lateralControlState :union {
     indiState @52 :LateralINDIState;
@@ -737,7 +753,7 @@ struct ControlsState @0x97ff69c53601abf1 {
     normal @0;       # low priority alert for user's convenience
     userPrompt @1;   # mid priority alert that might require user intervention
     critical @2;     # high priority alert that needs immediate user intervention
-    frogpilot @3;    # green startup alert
+    frogpilot @3;    # FrogPilot startup alert
   }
 
   enum AlertSize {
@@ -859,6 +875,40 @@ struct ControlsState @0x97ff69c53601abf1 {
   steeringAngleDesiredDegDEPRECATED @29 :Float32;
   canMonoTimesDEPRECATED @21 :List(UInt64);
   desiredCurvatureRateDEPRECATED @62 :Float32;
+  canErrorCounterDEPRECATED @57 :UInt32;
+}
+
+struct DrivingModelData {
+  frameId @0 :UInt32;
+  frameIdExtra @1 :UInt32;
+  frameDropPerc @6 :Float32;
+  modelExecutionTime @7 :Float32;
+
+  action @2 :ModelDataV2.Action;
+
+  laneLineMeta @3 :LaneLineMeta;
+  meta @4 :MetaData;
+
+  path @5 :PolyPath;
+
+  struct PolyPath {
+    xCoefficients @0 :List(Float32);
+    yCoefficients @1 :List(Float32);
+    zCoefficients @2 :List(Float32);
+  }
+
+  struct LaneLineMeta {
+    leftY @0 :Float32;
+    rightY @1 :Float32;
+    leftProb @2 :Float32;
+    rightProb @3 :Float32;
+  }
+
+  struct MetaData {
+    laneChangeState @0 :LaneChangeState;
+    laneChangeDirection @1 :LaneChangeDirection;
+    turnDirection @2 :TurnDirection;
+  }
 }
 
 # All SI units and in device frame
@@ -974,6 +1024,8 @@ struct ModelDataV2 {
     brake3MetersPerSecondSquaredProbs @4 :List(Float32);
     brake4MetersPerSecondSquaredProbs @5 :List(Float32);
     brake5MetersPerSecondSquaredProbs @6 :List(Float32);
+    gasPressProbs @7 :List(Float32);
+    brakePressProbs @8 :List(Float32);
   }
 
   struct Pose {
@@ -1054,9 +1106,13 @@ struct LongitudinalPlan @0xe00b5b3eba12876c {
   accels @32 :List(Float32);
   speeds @33 :List(Float32);
   jerks @34 :List(Float32);
+  aTarget @18 :Float32;
+  shouldStop @37: Bool;
+  allowThrottle @38: Bool;
+  allowBrake @39: Bool;
+
 
   solverExecutionTime @35 :Float32;
-  personality @36 :LongitudinalPersonality;
 
   enum LongitudinalPlanSource {
     cruise @0;
@@ -1071,7 +1127,6 @@ struct LongitudinalPlan @0xe00b5b3eba12876c {
   aCruiseDEPRECATED @17 :Float32;
   vTargetDEPRECATED @3 :Float32;
   vTargetFutureDEPRECATED @14 :Float32;
-  aTargetDEPRECATED @18 :Float32;
   vStartDEPRECATED @26 :Float32;
   aStartDEPRECATED @27 :Float32;
   vMaxDEPRECATED @20 :Float32;
@@ -1094,6 +1149,7 @@ struct LongitudinalPlan @0xe00b5b3eba12876c {
   eventsDEPRECATED @13 :List(Car.CarEvent);
   gpsTrajectoryDEPRECATED @12 :GpsTrajectory;
   gpsPlannerActiveDEPRECATED @19 :Bool;
+  personalityDEPRECATED @36 :LongitudinalPersonality;
 
   struct GpsTrajectory {
     x @0 :List(Float32);
@@ -1132,29 +1188,6 @@ struct LateralPlan @0xe1e9318e2ae8b51e {
   struct SolverState {
     x @0 :List(List(Float32));
     u @1 :List(Float32);
-  }
-
-  enum Desire {
-    none @0;
-    turnLeft @1;
-    turnRight @2;
-    laneChangeLeft @3;
-    laneChangeRight @4;
-    keepLeft @5;
-    keepRight @6;
-  }
-
-  enum LaneChangeState {
-    off @0;
-    preLaneChange @1;
-    laneChangeStarting @2;
-    laneChangeFinishing @3;
-  }
-
-  enum LaneChangeDirection {
-    none @0;
-    left @1;
-    right @2;
   }
 
   # deprecated
@@ -2259,6 +2292,7 @@ struct Event {
     liveCalibration @19 :LiveCalibrationData;
     carState @22 :Car.CarState;
     carControl @23 :Car.CarControl;
+    carOutput @127 :Car.CarOutput;
     longitudinalPlan @24 :LongitudinalPlan;
     uiPlan @106 :UiPlan;
     ubloxGnss @34 :UbloxGnss;
@@ -2276,8 +2310,8 @@ struct Event {
     driverMonitoringState @71: DriverMonitoringState;
     liveLocationKalman @72 :LiveLocationKalman;
     modelV2 @75 :ModelDataV2;
+    drivingModelData @128 :DrivingModelData;
     driverStateV2 @92 :DriverStateV2;
-    navModel @104 :NavModelData;
 
     # camera stuff, each camera state has a matching encode idx
     roadCameraState @2 :FrameData;
@@ -2331,7 +2365,7 @@ struct Event {
     customReservedRawData2 @126 :Data;
 
     # *********** Custom: reserved for forks ***********
-    frogpilotCarControl @107 :Custom.FrogPilotCarControl;
+    frogpilotCarState @107 :Custom.FrogPilotCarState;
     frogpilotDeviceState @108 :Custom.FrogPilotDeviceState;
     frogpilotNavigation @109 :Custom.FrogPilotNavigation;
     frogpilotPlan @110 :Custom.FrogPilotPlan;
@@ -2381,5 +2415,6 @@ struct Event {
     driverStateDEPRECATED @59 :DriverStateDEPRECATED;
     sensorEventsDEPRECATED @11 :List(SensorEventData);
     lateralPlanDEPRECATED @64 :LateralPlan;
+    navModel @104 :NavModelData;
   }
 }

@@ -2,7 +2,7 @@
 
 #define GET_BIT(msg, b) ((bool)!!(((msg)->data[((b) / 8U)] >> ((b) % 8U)) & 0x1U))
 #define GET_BYTE(msg, b) ((msg)->data[(b)])
-#define GET_FLAG(value, mask) (((__typeof__(mask))(value) & (mask)) == (mask))
+#define GET_FLAG(value, mask) (((__typeof__(mask))(value) & (mask)) == (mask)) // cppcheck-suppress misra-c2012-1.2; allow __typeof__
 
 #define BUILD_SAFETY_CFG(rx, tx) ((safety_config){(rx), (sizeof((rx)) / sizeof((rx)[0])), \
                                                   (tx), (sizeof((tx)) / sizeof((tx)[0]))})
@@ -224,6 +224,8 @@ bool sport_mode = false;
 struct sample_t vehicle_speed;
 bool vehicle_moving = false;
 bool acc_main_on = false;  // referred to as "ACC off" in ISO 15622:2018
+bool lkas_on = false;
+bool lkas_pressed_prev = false;
 int cruise_button_prev = 0;
 int cruise_main_prev = 0;
 bool safety_rx_checks_invalid = false;

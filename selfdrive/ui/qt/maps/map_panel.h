@@ -9,7 +9,6 @@ class MapPanel : public QFrame {
 
 public:
   explicit MapPanel(const QMapLibre::Settings &settings, QWidget *parent = nullptr);
-  void setVisible(bool visible);
 
 signals:
   void mapPanelRequested();
@@ -19,4 +18,8 @@ public slots:
 
 private:
   QStackedLayout *content_stack;
+
+  // FrogPilot widgets
+  void hideEvent(QHideEvent *event);
+  void showEvent(QShowEvent *event);
 };

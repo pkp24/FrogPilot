@@ -9,7 +9,8 @@ import threading
 import time
 import traceback
 import datetime
-from typing import BinaryIO, Iterator, List, Optional, Tuple
+from typing import BinaryIO
+from collections.abc import Iterator
 
 from cereal import log
 import cereal.messaging as messaging
@@ -20,11 +21,17 @@ from openpilot.system.hardware.hw import Paths
 from openpilot.system.loggerd.xattr_cache import getxattr, setxattr
 from openpilot.common.swaglog import cloudlog
 
+from openpilot.selfdrive.frogpilot.frogpilot_variables import get_frogpilot_toggles
+
 NetworkType = log.DeviceState.NetworkType
 UPLOAD_ATTR_NAME = 'user.upload'
 UPLOAD_ATTR_VALUE = b'1'
 
-UPLOAD_QLOG_QCAM_MAX_SIZE = 5 * 1e6  # MB
+MAX_UPLOAD_SIZES = {
+  "qlog": 25*1e6,  # can't be too restrictive here since we use qlogs to find
+                   # bugs, including ones that can cause massive log sizes
+  "qcam": 5*1e6,
+}
 
 allow_sleep = bool(os.getenv("UPLOADER_SLEEP", "1"))
 force_wifi = os.getenv("FORCEWIFI") is not None
@@ -42,10 +49,12 @@ class FakeResponse:
     self.request = FakeRequest()
 
 
-def get_directory_sort(d: str) -> List[str]:
-  return [s.rjust(10, '0') for s in d.rsplit('--', 1)]
+def get_directory_sort(d: str) -> list[str]:
+  # ensure old format is sorted sooner
+  o = ["0", ] if d.startswith("2024-") else ["1", ]
+  return o + [s.rjust(10, '0') for s in d.rsplit('--', 1)]
 
-def listdir_by_creation(d: str) -> List[str]:
+def listdir_by_creation(d: str) -> list[str]:
   if not os.path.isdir(d):
     return []
 
@@ -82,7 +91,7 @@ class Uploader:
     self.immediate_folders = ["crash/", "boot/"]
     self.immediate_priority = {"qlog": 0, "qlog.bz2": 0, "qcamera.ts": 1}
 
-  def list_upload_files(self, metered: bool) -> Iterator[Tuple[str, str, str]]:
+  def list_upload_files(self, metered: bool) -> Iterator[tuple[str, str, str]]:
     r = self.params.get("AthenadRecentlyViewedRoutes", encoding="utf8")
     requested_routes = [] if r is None else r.split(",")
 
@@ -121,7 +130,7 @@ class Uploader:
 
         yield name, key, fn
 
-  def next_file_to_upload(self, metered: bool) -> Optional[Tuple[str, str, str]]:
+  def next_file_to_upload(self, metered: bool) -> tuple[str, str, str] | None:
     upload_files = list(self.list_upload_files(metered))
 
     for name, key, fn in upload_files:
@@ -169,7 +178,7 @@ class Uploader:
     if sz == 0:
       # tag files of 0 size as uploaded
       success = True
-    elif name in self.immediate_priority and sz > UPLOAD_QLOG_QCAM_MAX_SIZE:
+    elif name in MAX_UPLOAD_SIZES and sz > MAX_UPLOAD_SIZES[name]:
       cloudlog.event("uploader_too_large", key=key, fn=fn, sz=sz)
       success = True
     else:
@@ -207,7 +216,7 @@ class Uploader:
     return success
 
 
-  def step(self, network_type: int, metered: bool) -> Optional[bool]:
+  def step(self, network_type: int, metered: bool) -> bool | None:
     d = self.next_file_to_upload(metered)
     if d is None:
       return None
@@ -221,7 +230,7 @@ class Uploader:
     return self.upload(name, key, fn, network_type, metered)
 
 
-def main(exit_event: Optional[threading.Event] = None) -> None:
+def main(exit_event: threading.Event = None) -> None:
   if exit_event is None:
     exit_event = threading.Event()
 
@@ -239,15 +248,20 @@ def main(exit_event: Optional[threading.Event] = None) -> None:
     cloudlog.info("uploader missing dongle_id")
     raise Exception("uploader can't start without dongle id")
 
-  sm = messaging.SubMaster(['deviceState'])
+  sm = messaging.SubMaster(['deviceState', 'frogpilotPlan'])
   uploader = Uploader(dongle_id, Paths.log_root())
 
   backoff = 0.1
+
+  # FrogPilot variables
+  frogpilot_toggles = get_frogpilot_toggles()
+
   while not exit_event.is_set():
     sm.update(0)
     offroad = params.get_bool("IsOffroad")
     network_type = sm['deviceState'].networkType if not force_wifi else NetworkType.wifi
-    if network_type == NetworkType.none:
+    at_home = not frogpilot_toggles.no_onroad_uploads or offroad and network_type in {NetworkType.ethernet, NetworkType.wifi}
+    if network_type == NetworkType.none or not at_home:
       if allow_sleep:
         time.sleep(60 if offroad else 5)
       continue
@@ -263,6 +277,9 @@ def main(exit_event: Optional[threading.Event] = None) -> None:
     if allow_sleep:
       time.sleep(backoff + random.uniform(0, backoff))
 
+    # Update FrogPilot parameters
+    if sm['frogpilotPlan'].togglesUpdated:
+      frogpilot_toggles = get_frogpilot_toggles()
 
 if __name__ == "__main__":
   main()

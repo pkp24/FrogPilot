@@ -4,7 +4,7 @@
 
 #include "cereal/messaging/messaging.h"
 #include "cereal/services.h"
-#include "cereal/visionipc/visionipc_client.h"
+#include "msgq/visionipc/visionipc_client.h"
 #include "system/camerad/cameras/camera_common.h"
 #include "system/hardware/hw.h"
 #include "common/params.h"
@@ -14,7 +14,7 @@
 #include "system/loggerd/logger.h"
 
 constexpr int MAIN_FPS = 20;
-const int MAIN_BITRATE = Params().getBool("HigherBitrate") ? 20000000 : 1e7;
+const int MAIN_BITRATE = 1e7;
 const int LIVESTREAM_BITRATE = 1e6;
 const int QCAM_BITRATE = 256000;
 
@@ -33,6 +33,7 @@ constexpr char PRESERVE_ATTR_VALUE = '1';
 class EncoderInfo {
 public:
   const char *publish_name;
+  const char *thumbnail_name = NULL;
   const char *filename = NULL;
   bool record = true;
   int frame_width = -1;
@@ -76,6 +77,7 @@ const EncoderInfo main_driver_encoder_info = {
 
 const EncoderInfo stream_road_encoder_info = {
   .publish_name = "livestreamRoadEncodeData",
+  //.thumbnail_name = "thumbnail",
   .encode_type = cereal::EncodeIndex::Type::QCAMERA_H264,
   .record = false,
   .bitrate = LIVESTREAM_BITRATE,

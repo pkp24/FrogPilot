@@ -33,21 +33,50 @@ def create_lta_steer_command(packer, steer_control_type, steer_angle, steer_req,
   return packer.make_can_msg("STEERING_LTA", 0, values)
 
 
-def create_accel_command(packer, accel, accel_raw, pcm_cancel, standstill_req, lead, acc_type, fcw_alert, distance_button, frogpilot_variables):
+def create_lta_steer_command_2(packer, frame):
+  values = {
+    "COUNTER": frame + 128,
+  }
+  return packer.make_can_msg("STEERING_LTA_2", 0, values)
+
+
+def create_accel_command(packer, accel, pcm_cancel, permit_braking, standstill_req, lead, acc_type, fcw_alert, distance, reverse_cruise_active):
   # TODO: find the exact canceling bit that does not create a chime
   values = {
-    "ACCEL_CMD": accel,  # compensated accel command
+    "ACCEL_CMD": accel,
     "ACC_TYPE": acc_type,
-    "DISTANCE": distance_button,
+    "DISTANCE": distance,
     "MINI_CAR": lead,
-    "PERMIT_BRAKING": 1,
+    "PERMIT_BRAKING": permit_braking,
     "RELEASE_STANDSTILL": not standstill_req,
     "CANCEL_REQ": pcm_cancel,
-    "ALLOW_LONG_PRESS": 2 if frogpilot_variables.reverse_cruise_increase else 1,
+    "ALLOW_LONG_PRESS": 2 if reverse_cruise_active else 1,
     "ACC_CUT_IN": fcw_alert,  # only shown when ACC enabled
-    "ACCEL_CMD_ALT":  accel_raw,  # raw accel command, pcm uses this to calculate a compensatory force
   }
   return packer.make_can_msg("ACC_CONTROL", 0, values)
+
+
+def create_pcs_commands(packer, accel, active, mass):
+  values1 = {
+    "COUNTER": 0,
+    "FORCE": round(min(accel, 0) * mass * 2),
+    "STATE": 3 if active else 0,
+    "BRAKE_STATUS": 0,
+    "PRECOLLISION_ACTIVE": 1 if active else 0,
+  }
+  msg1 = packer.make_can_msg("PRE_COLLISION", 0, values1)
+
+  values2 = {
+    "DSS1GDRV": min(accel, 0),     # accel
+    "PCSALM": 1 if active else 0,  # goes high same time as PRECOLLISION_ACTIVE
+    "IBTRGR": 1 if active else 0,  # unknown
+    "PBATRGR": 1 if active else 0, # noisy actuation bit?
+    "PREFILL": 1 if active else 0, # goes on and off before DSS1GDRV
+    "AVSTRGR": 1 if active else 0,
+  }
+  msg2 = packer.make_can_msg("PRE_COLLISION_2", 0, values2)
+
+  return [msg1, msg2]
 
 
 def create_acc_cancel_command(packer):
@@ -80,7 +109,7 @@ def create_ui_command(packer, steer, chime, left_line, right_line, left_lane_dep
     "LDA_ALERT": steer,
     "RIGHT_LINE": 0 if not lat_active else 3 if right_lane_depart else 1 if right_line else 2,
     "LEFT_LINE": 0 if not lat_active else 3 if left_lane_depart else 1 if left_line else 2,
-    "BARRIERS": 1 if enabled else 0,
+    "BARRIERS": 1 if lat_active else 0,
 
     # static signals
     "SET_ME_X02": 2,

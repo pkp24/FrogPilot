@@ -1,55 +1,49 @@
 #pragma once
 
-#include <QPushButton>
-
 #include "omx_encoder.h"
 #include "blocking_queue.h"
-#include "selfdrive/ui/ui.h"
+
+#include "selfdrive/ui/qt/onroad/buttons.h"
 
 class ScreenRecorder : public QPushButton {
-#ifdef NO_SR
-  public:
-    explicit ScreenRecorder(QWidget *parent = nullptr){}
-    ~ScreenRecorder() override{}
-
-    void update_screen(){}
-    void toggle(){}
-#else
   Q_OBJECT
 
 public:
   explicit ScreenRecorder(QWidget *parent = nullptr);
   ~ScreenRecorder() override;
 
-  void update_screen();
-  void toggle();
+  void startRecording();
+  void stopRecording();
 
 protected:
   void paintEvent(QPaintEvent *event) override;
 
+private slots:
+  void toggleRecording();
+
 private:
-  void applyColor();
-  void closeEncoder();
-  void encoding_thread_func();
-  void initializeEncoder();
-  void openEncoder(const char *filename);
-  void start();
-  void stop();
+  void encodeImage();
+  void updateState();
 
   bool recording;
-  int frame;
-  int recording_height;
-  int recording_width;
-  int screen_height;
-  int screen_width;
-  long long started = 0;
+
+  int frameCount;
+
+  qint64 startedTime;
+
+  std::thread encodingThread;
 
   std::unique_ptr<OmxEncoder> encoder;
-  std::unique_ptr<uint8_t[]> rgb_scale_buffer;
-  std::thread encoding_thread;
 
-  BlockingQueue<QImage> image_queue;
-  QColor recording_color;
+  std::vector<uint8_t> rgbScaleBuffer;
+
+  BlockingQueue<QImage> imageQueue{UI_FREQ};
+
+  QColor blackColor(int alpha = 255) { return QColor(0, 0, 0, alpha); }
+  QColor redColor(int alpha = 255) { return QColor(201, 34, 49, alpha); }
+  QColor whiteColor(int alpha = 255) { return QColor(255, 255, 255, alpha); }
+
+  QImage synthesizeFrame(const QImage &frame1, const QImage &frame2, double alpha);
+
   QWidget *rootWidget;
-#endif //NO_SR
 };

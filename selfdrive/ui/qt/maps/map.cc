@@ -5,6 +5,7 @@
 
 #include <QDebug>
 
+#include "common/swaglog.h"
 #include "selfdrive/ui/qt/maps/map_helpers.h"
 #include "selfdrive/ui/qt/util.h"
 #include "selfdrive/ui/ui.h"
@@ -54,7 +55,18 @@ MapWindow::~MapWindow() {
 
 void MapWindow::initLayers() {
   // This doesn't work from initializeGL
-    if (!m_map->layerExists("navLayer")) {
+  if (!m_map->layerExists("modelPathLayer")) {
+    qDebug() << "Initializing modelPathLayer";
+    QVariantMap modelPath;
+    //modelPath["id"] = "modelPathLayer";
+    modelPath["type"] = "line";
+    modelPath["source"] = "modelPathSource";
+    m_map->addLayer("modelPathLayer", modelPath);
+    m_map->setPaintProperty("modelPathLayer", "line-color", QColor("red"));
+    m_map->setPaintProperty("modelPathLayer", "line-width", 5.0);
+    m_map->setLayoutProperty("modelPathLayer", "line-cap", "round");
+  }
+  if (!m_map->layerExists("navLayer")) {
     qDebug() << "Initializing navLayer";
     QVariantMap nav;
     nav["type"] = "line";
@@ -67,17 +79,6 @@ void MapWindow::initLayers() {
     m_map->setPaintProperty("navLayer", "line-color-transition", transition);
     m_map->setPaintProperty("navLayer", "line-width", 7.5);
     m_map->setLayoutProperty("navLayer", "line-cap", "round");
-  }
-if (!m_map->layerExists("modelPathLayer")) {
-    qDebug() << "Initializing modelPathLayer";
-    QVariantMap modelPath;
-    //modelPath["id"] = "modelPathLayer";
-    modelPath["type"] = "line";
-    modelPath["source"] = "modelPathSource";
-    m_map->addLayer("modelPathLayer", modelPath);
-    m_map->setPaintProperty("modelPathLayer", "line-color", QColor("red"));
-    m_map->setPaintProperty("modelPathLayer", "line-width", 5.0);
-    m_map->setLayoutProperty("modelPathLayer", "line-cap", "round");
   }
   if (!m_map->layerExists("pinLayer")) {
     qDebug() << "Initializing pinLayer";
@@ -109,7 +110,7 @@ if (!m_map->layerExists("modelPathLayer")) {
     // TODO: remove, symbol-sort-key does not seem to matter outside of each layer
     m_map->setLayoutProperty("carPosLayer", "symbol-sort-key", 0);
   }
-
+  // Credit goes to jakethesnake420!
   if (!m_map->layerExists("buildingsLayer")) {
     qDebug() << "Initializing buildingsLayer";
     QVariantMap buildings;
@@ -162,10 +163,18 @@ void MapWindow::updateState(const UIState &s) {
   const SubMaster &sm = *(s.sm);
   update();
 
+  // on rising edge of a valid system time, reinitialize the map to set a new token
+  if (sm.valid("clocks") && !prev_time_valid) {
+    LOGW("Time is now valid, reinitializing map");
+    m_settings.setApiKey(get_mapbox_token());
+    initializeGL();
+  }
+  prev_time_valid = sm.valid("clocks");
+
   if (sm.updated("modelV2")) {
     // set path color on change, and show map on rising edge of navigate on openpilot
     bool nav_enabled = sm["modelV2"].getModelV2().getNavEnabled() &&
-                       (sm["controlsState"].getControlsState().getEnabled() || sm["frogpilotCarControl"].getFrogpilotCarControl().getAlwaysOnLateral());
+                       (sm["controlsState"].getControlsState().getEnabled() || uiState()->scene.always_on_lateral_enabled);
     if (nav_enabled != uiState()->scene.navigate_on_openpilot) {
       if (loaded_once) {
         m_map->setPaintProperty("navLayer", "line-color", getNavPathColor(nav_enabled));
@@ -182,29 +191,21 @@ void MapWindow::updateState(const UIState &s) {
     auto locationd_pos = locationd_location.getPositionGeodetic();
     auto locationd_orientation = locationd_location.getCalibratedOrientationNED();
     auto locationd_velocity = locationd_location.getVelocityCalibrated();
+    auto locationd_ecef = locationd_location.getPositionECEF();
 
-    // Check std norm
-    auto pos_ecef_std = locationd_location.getPositionECEF().getStd();
-    bool pos_accurate_enough = sqrt(pow(pos_ecef_std[0], 2) + pow(pos_ecef_std[1], 2) + pow(pos_ecef_std[2], 2)) < 100;
-
-    locationd_valid = (locationd_pos.getValid() && locationd_orientation.getValid() && locationd_velocity.getValid() && pos_accurate_enough);
+    locationd_valid = (locationd_pos.getValid() && locationd_orientation.getValid() && locationd_velocity.getValid() && locationd_ecef.getValid());
+    if (locationd_valid) {
+      // Check std norm
+      auto pos_ecef_std = locationd_ecef.getStd();
+      bool pos_accurate_enough = sqrt(pow(pos_ecef_std[0], 2) + pow(pos_ecef_std[1], 2) + pow(pos_ecef_std[2], 2)) < 100;
+      locationd_valid = pos_accurate_enough;
+    }
 
     if (locationd_valid) {
       last_position = QMapLibre::Coordinate(locationd_pos.getValue()[0], locationd_pos.getValue()[1]);
       last_bearing = RAD2DEG(locationd_orientation.getValue()[2]);
       velocity_filter.update(std::max(10.0, locationd_velocity.getValue()[0]));
     }
-}
-  // Credit to jakethesnake420
-  if (loaded_once && (sm.rcv_frame("uiPlan") != model_rcv_frame)) {
-    auto locationd_location = sm["liveLocationKalman"].getLiveLocationKalman();
-    auto model_path = model_to_collection(locationd_location.getCalibratedOrientationECEF(), locationd_location.getPositionECEF(), sm["uiPlan"].getUiPlan().getPosition());
-    QMapLibre::Feature model_path_feature(QMapLibre::Feature::LineStringType, model_path, {}, {});
-    QVariantMap modelV2Path;
-    modelV2Path["type"] =  "geojson";
-    modelV2Path["data"] = QVariant::fromValue<QMapLibre::Feature>(model_path_feature);
-    m_map->updateSource("modelPathSource", modelV2Path);
-    model_rcv_frame = sm.rcv_frame("uiPlan");
   }
 
   if (sm.updated("navRoute") && sm["navRoute"].getNavRoute().getCoordinates().size()) {
@@ -293,26 +294,37 @@ void MapWindow::updateState(const UIState &s) {
     updateDestinationMarker();
   }
 
+  // Credit to jakethesnake420
+  if (loaded_once && (sm.rcv_frame("uiPlan") != model_rcv_frame)) {
+    auto locationd_location = sm["liveLocationKalman"].getLiveLocationKalman();
+    auto model_path = model_to_collection(locationd_location.getCalibratedOrientationECEF(), locationd_location.getPositionECEF(), sm["uiPlan"].getUiPlan().getPosition());
+    QMapLibre::Feature model_path_feature(QMapLibre::Feature::LineStringType, model_path, {}, {});
+    QVariantMap modelV2Path;
+    modelV2Path["type"] =  "geojson";
+    modelV2Path["data"] = QVariant::fromValue<QMapLibre::Feature>(model_path_feature);
+    m_map->updateSource("modelPathSource", modelV2Path);
+    model_rcv_frame = sm.rcv_frame("uiPlan");
+  }
+
   // Map Styling - Credit goes to OPKR!
   int map_style = uiState()->scene.map_style;
 
   if (map_style != previous_map_style) {
-    std::unordered_map<int, std::string> styleUrls = {
-      {0, "mapbox://styles/commaai/clkqztk0f00ou01qyhsa5bzpj"},  // Stock openpilot
-      {1, "mapbox://styles/mapbox/streets-v11"},  // Mapbox Streets
-      {2, "mapbox://styles/mapbox/outdoors-v11"},  // Mapbox Outdoors
-      {3, "mapbox://styles/mapbox/light-v10"},  // Mapbox Light
-      {4, "mapbox://styles/mapbox/dark-v10"},  // Mapbox Dark
-      {5, "mapbox://styles/mapbox/satellite-v9"},  // Mapbox Satellite
-      {6, "mapbox://styles/mapbox/satellite-streets-v11"},  // Mapbox Satellite Streets
-      {7, "mapbox://styles/mapbox/navigation-day-v1"},  // Mapbox Navigation Day
-      {8, "mapbox://styles/mapbox/navigation-night-v1"},  // Mapbox Navigation Night
-      {9, "mapbox://styles/mapbox/traffic-night-v2"},  // Mapbox Traffic Night
-      {10, "mapbox://styles/mike854/clt0hm8mw01ok01p4blkr27jp"},  // mike854's (Satellite hybrid)
+    std::array<std::string, 11> styleUrls = {
+      "mapbox://styles/commaai/clkqztk0f00ou01qyhsa5bzpj",  // Stock openpilot
+      "mapbox://styles/mapbox/streets-v11",                 // Mapbox Streets
+      "mapbox://styles/mapbox/outdoors-v11",                // Mapbox Outdoors
+      "mapbox://styles/mapbox/light-v10",                   // Mapbox Light
+      "mapbox://styles/mapbox/dark-v10",                    // Mapbox Dark
+      "mapbox://styles/mapbox/navigation-day-v1",           // Mapbox Navigation Day
+      "mapbox://styles/mapbox/navigation-night-v1",         // Mapbox Navigation Night
+      "mapbox://styles/mapbox/satellite-v9",                // Mapbox Satellite
+      "mapbox://styles/mapbox/satellite-streets-v11",       // Mapbox Satellite Streets
+      "mapbox://styles/mapbox/traffic-night-v2",            // Mapbox Traffic Night
+      "mapbox://styles/mike854/clt0hm8mw01ok01p4blkr27jp"   // mike854's (Satellite hybrid)
     };
 
-    std::unordered_map<int, std::string>::iterator it = styleUrls.find(map_style);
-    m_map->setStyleUrl(QString::fromStdString(it->second));
+    m_map->setStyleUrl(QString::fromStdString(styleUrls[map_style]));
   }
 
   previous_map_style = map_style;
@@ -352,6 +364,10 @@ void MapWindow::initializeGL() {
     if (change == QMapLibre::Map::MapChange::MapChangeDidFinishLoadingMap) {
       loaded_once = true;
     }
+  });
+
+  QObject::connect(m_map.data(), &QMapLibre::Map::mapLoadingFailed, [=](QMapLibre::Map::MapLoadingFailure err_code, const QString &reason) {
+    LOGE("Map loading failed with %d: '%s'\n", err_code, reason.toStdString().c_str());
   });
 }
 

@@ -10,10 +10,9 @@
 #include <QStackedWidget>
 #include <QWidget>
 
-
+#include "selfdrive/ui/ui.h"
 #include "selfdrive/ui/qt/util.h"
 #include "selfdrive/ui/qt/widgets/controls.h"
-#include "selfdrive/ui/ui.h"
 
 // ********** settings window + top-level panels **********
 class SettingsWindow : public QFrame {
@@ -26,6 +25,9 @@ public:
 protected:
   void showEvent(QShowEvent *event) override;
 
+  // FrogPilot widgets
+  void hideEvent(QHideEvent *event) override;
+
 signals:
   void closeSettings();
   void reviewTrainingGuide();
@@ -33,9 +35,13 @@ signals:
   void expandToggleDescription(const QString &param);
 
   // FrogPilot signals
+  void closeMapBoxInstructions();
+  void closeMapSelection();
+  void closePanel();
   void closeParentToggle();
   void closeSubParentToggle();
-  void updateMetric();
+  void updateMetric(bool metric, bool bootRun=false);
+
 private:
   QPushButton *sidebar_alert_widget;
   QWidget *sidebar_widget;
@@ -43,16 +49,22 @@ private:
   QStackedWidget *panel_widget;
 
   // FrogPilot variables
+  Params params;
+  Params paramsTracking{"/cache/tracking"};
+
+  bool mapboxInstructionsOpen;
+  bool mapSelectionOpen;
+  bool panelOpen;
   bool parentToggleOpen;
   bool subParentToggleOpen;
-
-  int previousScrollPosition;
 };
 
 class DevicePanel : public ListWidget {
   Q_OBJECT
 public:
   explicit DevicePanel(SettingsWindow *parent);
+  void showEvent(QShowEvent *event) override;
+
 signals:
   void reviewTrainingGuide();
   void showDriverView();
@@ -60,11 +72,14 @@ signals:
 private slots:
   void poweroff();
   void reboot();
-  void softreboot();
   void updateCalibDescription();
 
 private:
   Params params;
+  ButtonControl *pair_device;
+
+  // FrogPilot variables
+  Params params_cache{"/cache/params"};
 };
 
 class TogglesPanel : public ListWidget {
@@ -75,10 +90,13 @@ public:
 
 signals:
   // FrogPilot signals
-  void updateMetric();
+  void updateMetric(bool metric, bool bootRun=false);
 
 public slots:
   void expandToggleDescription(const QString &param);
+
+private slots:
+  void updateState(const UIState &s);
 
 private:
   Params params;
@@ -102,7 +120,6 @@ private:
 
   QLabel *onroadLbl;
   LabelControl *versionLbl;
-  ButtonControl *errorLogBtn;
   ButtonControl *installBtn;
   ButtonControl *downloadBtn;
   ButtonControl *targetBranchBtn;
@@ -111,12 +128,5 @@ private:
   ParamWatcher *fs_watch;
 
   // FrogPilot variables
-  void automaticUpdate();
-
-  UIScene &scene;
-
-  ButtonControl *updateTime;
-
-  int schedule;
-  int time;
+  Params params_memory{"/dev/shm/params"};
 };

@@ -1,5 +1,3 @@
-#include "selfdrive/ui/qt/offroad/settings.h"
-
 #include <cassert>
 #include <cmath>
 #include <string>
@@ -7,26 +5,17 @@
 #include <vector>
 
 #include <QDebug>
-#include <QScrollBar>
 
-#include "selfdrive/ui/qt/network/networking.h"
-
-#include "common/params.h"
 #include "common/watchdog.h"
 #include "common/util.h"
-#include "system/hardware/hw.h"
-#include "selfdrive/ui/qt/widgets/controls.h"
-#include "selfdrive/ui/qt/widgets/input.h"
+#include "selfdrive/ui/qt/network/networking.h"
+#include "selfdrive/ui/qt/offroad/settings.h"
+#include "selfdrive/ui/qt/qt_window.h"
+#include "selfdrive/ui/qt/widgets/prime.h"
 #include "selfdrive/ui/qt/widgets/scrollview.h"
 #include "selfdrive/ui/qt/widgets/ssh_keys.h"
-#include "selfdrive/ui/qt/widgets/toggle.h"
-#include "selfdrive/ui/qt/util.h"
-#include "selfdrive/ui/qt/qt_window.h"
 
-#include "selfdrive/frogpilot/navigation/ui/navigation_settings.h"
-#include "selfdrive/frogpilot/ui/control_settings.h"
-#include "selfdrive/frogpilot/ui/vehicle_settings.h"
-#include "selfdrive/frogpilot/ui/visual_settings.h"
+#include "selfdrive/frogpilot/ui/qt/offroad/frogpilot_settings.h"
 
 TogglesPanel::TogglesPanel(SettingsWindow *parent) : ListWidget(parent) {
   // param, title, desc, icon
@@ -96,9 +85,14 @@ TogglesPanel::TogglesPanel(SettingsWindow *parent) : ListWidget(parent) {
   std::vector<QString> longi_button_texts{tr("Aggressive"), tr("Standard"), tr("Relaxed")};
   long_personality_setting = new ButtonParamControl("LongitudinalPersonality", tr("Driving Personality"),
                                           tr("Standard is recommended. In aggressive mode, openpilot will follow lead cars closer and be more aggressive with the gas and brake. "
-                                             "In relaxed mode openpilot will stay further away from lead cars."),
+                                             "In relaxed mode openpilot will stay further away from lead cars. On supported cars, you can cycle through these personalities with "
+                                             "your steering wheel distance button."),
                                           "../assets/offroad/icon_speed_limit.png",
                                           longi_button_texts);
+
+  // set up uiState update for personality setting
+  QObject::connect(uiState(), &UIState::uiUpdate, this, &TogglesPanel::updateState);
+
   for (auto &[param, title, desc, icon] : toggle_defs) {
     auto toggle = new ParamControl(param, title, desc, icon, this);
 
@@ -109,7 +103,7 @@ TogglesPanel::TogglesPanel(SettingsWindow *parent) : ListWidget(parent) {
     toggles[param.toStdString()] = toggle;
 
     // insert longitudinal personality after NDOG toggle
-    if (param == "DisengageOnAccelerator" && !params.getBool("AdjustablePersonalities")) {
+    if (param == "DisengageOnAccelerator") {
       addItem(long_personality_setting);
     }
   }
@@ -123,9 +117,22 @@ TogglesPanel::TogglesPanel(SettingsWindow *parent) : ListWidget(parent) {
     updateToggles();
   });
 
-  connect(toggles["IsMetric"], &ToggleControl::toggleFlipped, [=]() {
-    updateMetric();
+  // FrogPilot signals
+  connect(toggles["IsMetric"], &ToggleControl::toggleFlipped, [=](bool metric) {
+    updateMetric(metric);
   });
+}
+
+void TogglesPanel::updateState(const UIState &s) {
+  const SubMaster &sm = *(s.sm);
+
+  if (sm.updated("controlsState")) {
+    auto personality = sm["controlsState"].getControlsState().getPersonality();
+    if (personality != s.scene.personality && s.scene.started && isVisible()) {
+      long_personality_setting->setCheckedButton(static_cast<int>(personality));
+    }
+    uiState()->scene.personality = personality;
+  }
 }
 
 void TogglesPanel::expandToggleDescription(const QString &param) {
@@ -137,42 +144,44 @@ void TogglesPanel::showEvent(QShowEvent *event) {
 }
 
 void TogglesPanel::updateToggles() {
+  UIState *s = uiState();
+  UIScene &scene = s->scene;
+
+  auto disengage_on_accelerator_toggle = toggles["DisengageOnAccelerator"];
+  disengage_on_accelerator_toggle->setVisible(!scene.always_on_lateral);
+  auto driver_camera_toggle = toggles["RecordFront"];
+  driver_camera_toggle->setVisible(!(scene.no_logging && scene.no_uploads));
+  auto nav_settings_left_toggle = toggles["NavSettingLeftSide"];
+  nav_settings_left_toggle->setVisible(!scene.full_map);
+
   auto experimental_mode_toggle = toggles["ExperimentalMode"];
   auto op_long_toggle = toggles["ExperimentalLongitudinalEnabled"];
   const QString e2e_description = QString("%1<br>"
                                           "<h4>%2</h4><br>"
                                           "%3<br>"
                                           "<h4>%4</h4><br>"
-                                          "%5<br>"
-                                          "<h4>%6</h4><br>"
-                                          "%7")
+                                          "%5<br>")
                                   .arg(tr("openpilot defaults to driving in <b>chill mode</b>. Experimental mode enables <b>alpha-level features</b> that aren't ready for chill mode. Experimental features are listed below:"))
                                   .arg(tr("End-to-End Longitudinal Control"))
                                   .arg(tr("Let the driving model control the gas and brakes. openpilot will drive as it thinks a human would, including stopping for red lights and stop signs. "
                                           "Since the driving model decides the speed to drive, the set speed will only act as an upper bound. This is an alpha quality feature; "
                                           "mistakes should be expected."))
-                                  .arg(tr("Navigate on openpilot"))
-                                  .arg(tr("When navigation has a destination, openpilot will input the map information into the model. This provides useful context for the model and allows openpilot to keep left or right "
-                                          "appropriately at forks/exits. Lane change behavior is unchanged and still activated by the driver. This is an alpha quality feature; mistakes should be expected, particularly around "
-                                          "exits and forks. These mistakes can include unintended laneline crossings, late exit taking, driving towards dividing barriers in the gore areas, etc."))
                                   .arg(tr("New Driving Visualization"))
-                                  .arg(tr("The driving visualization will transition to the road-facing wide-angle camera at low speeds to better show some turns. The Experimental mode logo will also be shown in the top right corner. "
-                                          "When a navigation destination is set and the driving model is using it as input, the driving path on the map will turn green."));
+                                  .arg(tr("The driving visualization will transition to the road-facing wide-angle camera at low speeds to better show some turns. The Experimental mode logo will also be shown in the top right corner."));
 
-  const bool is_release = params.getBool("IsReleaseBranch");
   auto cp_bytes = params.get("CarParamsPersistent");
   if (!cp_bytes.empty()) {
     AlignedBuffer aligned_buf;
     capnp::FlatArrayMessageReader cmsg(aligned_buf.align(cp_bytes.data(), cp_bytes.size()));
     cereal::CarParams::Reader CP = cmsg.getRoot<cereal::CarParams>();
 
-    if (!CP.getExperimentalLongitudinalAvailable() || is_release) {
+    if (!CP.getExperimentalLongitudinalAvailable()) {
       params.remove("ExperimentalLongitudinalEnabled");
     }
-    op_long_toggle->setVisible(CP.getExperimentalLongitudinalAvailable() && !is_release);
+    op_long_toggle->setVisible(CP.getExperimentalLongitudinalAvailable());
     if (hasLongitudinalControl(CP)) {
       // normal description and toggle
-      experimental_mode_toggle->setEnabled(!params.getBool("ConditionalExperimental"));
+      experimental_mode_toggle->setEnabled(true);
       experimental_mode_toggle->setDescription(e2e_description);
       long_personality_setting->setEnabled(true);
     } else {
@@ -186,11 +195,7 @@ void TogglesPanel::updateToggles() {
       QString long_desc = unavailable + " " + \
                           tr("openpilot longitudinal control may come in a future update.");
       if (CP.getExperimentalLongitudinalAvailable()) {
-        if (is_release) {
-          long_desc = unavailable + " " + tr("An alpha version of openpilot longitudinal control can be tested, along with Experimental mode, on non-release branches.");
-        } else {
-          long_desc = tr("Enable the openpilot longitudinal control (alpha) toggle to allow Experimental mode.");
-        }
+        long_desc = tr("Enable the openpilot longitudinal control (alpha) toggle to allow Experimental mode.");
       }
       experimental_mode_toggle->setDescription("<b>" + long_desc + "</b><br><br>" + e2e_description);
     }
@@ -207,6 +212,14 @@ DevicePanel::DevicePanel(SettingsWindow *parent) : ListWidget(parent) {
   addItem(new LabelControl(tr("Dongle ID"), getDongleId().value_or(tr("N/A"))));
   addItem(new LabelControl(tr("Serial"), params.get("HardwareSerial").c_str()));
 
+  pair_device = new ButtonControl(tr("Pair Device"), tr("PAIR"),
+                                  tr("Pair your device with comma connect (connect.comma.ai) and claim your comma prime offer."));
+  connect(pair_device, &ButtonControl::clicked, [=]() {
+    PairingPopup popup(this);
+    popup.exec();
+  });
+  addItem(pair_device);
+
   // offroad-only buttons
 
   auto dcamBtn = new ButtonControl(tr("Driver Camera"), tr("PREVIEW"),
@@ -220,6 +233,8 @@ DevicePanel::DevicePanel(SettingsWindow *parent) : ListWidget(parent) {
     if (ConfirmationDialog::confirm(tr("Are you sure you want to reset calibration?"), tr("Reset"), this)) {
       params.remove("CalibrationParams");
       params.remove("LiveTorqueParameters");
+      params_cache.remove("CalibrationParams");
+      params_cache.remove("LiveTorqueParameters");
     }
   });
   addItem(resetCalibBtn);
@@ -254,60 +269,14 @@ DevicePanel::DevicePanel(SettingsWindow *parent) : ListWidget(parent) {
   });
   addItem(translateBtn);
 
-  // Delete driving footage button
-  auto deleteFootageBtn = new ButtonControl(tr("Delete Driving Data"), tr("DELETE"), tr("This button provides a swift and secure way to permanently delete all "
-    "stored driving footage and data from your device. Ideal for maintaining privacy or freeing up space.")
-  );
-  connect(deleteFootageBtn, &ButtonControl::clicked, [this]() {
-    if (!ConfirmationDialog::confirm(tr("Are you sure you want to permanently delete all of your driving footage and data?"), tr("Delete"), this)) return;
-    std::thread([&] {
-      std::system("rm -rf /data/media/0/realdata");
-    }).detach();
+  QObject::connect(uiState(), &UIState::primeTypeChanged, [this] (PrimeType type) {
+    pair_device->setVisible(type == PrimeType::UNPAIRED);
   });
-  addItem(deleteFootageBtn);
-
-  // Delete long term toggle storage button
-  auto deleteStorageParamsBtn = new ButtonControl(tr("Delete Toggle Storage Data"), tr("DELETE"), tr("This button provides a swift and secure way to permanently delete all "
-    "long term stored toggle settings. Ideal for maintaining privacy or freeing up space.")
-  );
-  connect(deleteStorageParamsBtn, &ButtonControl::clicked, [this]() {
-    if (!ConfirmationDialog::confirm(tr("Are you sure you want to permanently delete all of your long term toggle settings storage?"), tr("Delete"), this)) return;
-    std::thread([&] {
-      std::system("rm -rf /persist/comma/params");
-    }).detach();
-  });
-  addItem(deleteStorageParamsBtn);
-
-  // Panda flashing button
-  auto flashPandaBtn = new ButtonControl(tr("Flash Panda"), tr("FLASH"), "Use this button to troubleshoot and update the Panda device's firmware.");
-  connect(flashPandaBtn, &ButtonControl::clicked, [this]() {
-    if (!ConfirmationDialog::confirm(tr("Are you sure you want to flash the Panda?"), tr("Flash"), this)) return;
-    QProcess process;
-    // Get Panda type
-    SubMaster &sm = *(uiState()->sm);
-    auto pandaStates = sm["pandaStates"].getPandaStates();
-    // Choose recovery script based on Panda type
-    if (pandaStates.size() != 0) {
-      auto pandaType = pandaStates[0].getPandaType();
-      bool isRedPanda = (pandaType == cereal::PandaState::PandaType::RED_PANDA ||
-                               pandaType == cereal::PandaState::PandaType::RED_PANDA_V2);
-      QString recoveryScript = isRedPanda ? "./recover.sh" : "./recover.py";
-      // Run recovery script and flash Panda
-      process.setWorkingDirectory("/data/openpilot/panda/board");
-      process.start("/bin/sh", QStringList{"-c", recoveryScript});
-      process.waitForFinished();
-    }
-    // Run the killall script as a redundancy
-    process.setWorkingDirectory("/data/openpilot/panda");
-    process.start("/bin/sh", QStringList{"-c", "pkill -f boardd; PYTHONPATH=.. python -c \"from panda import Panda; Panda().flash()\""});
-    process.waitForFinished();
-    Hardware::reboot();
-  });
-  addItem(flashPandaBtn);
-
   QObject::connect(uiState(), &UIState::offroadTransition, [=](bool offroad) {
     for (auto btn : findChildren<ButtonControl *>()) {
-      btn->setEnabled(offroad);
+      if (btn != pair_device) {
+        btn->setEnabled(offroad);
+      }
     }
   });
 
@@ -320,11 +289,6 @@ DevicePanel::DevicePanel(SettingsWindow *parent) : ListWidget(parent) {
   power_layout->addWidget(reboot_btn);
   QObject::connect(reboot_btn, &QPushButton::clicked, this, &DevicePanel::reboot);
 
-  QPushButton *softreboot_btn = new QPushButton(tr("Soft Reboot"));
-  softreboot_btn->setObjectName("softreboot_btn");
-  power_layout->addWidget(softreboot_btn);
-  QObject::connect(softreboot_btn, &QPushButton::clicked, this, &DevicePanel::softreboot);
-
   QPushButton *poweroff_btn = new QPushButton(tr("Power Off"));
   poweroff_btn->setObjectName("poweroff_btn");
   power_layout->addWidget(poweroff_btn);
@@ -335,10 +299,8 @@ DevicePanel::DevicePanel(SettingsWindow *parent) : ListWidget(parent) {
   }
 
   setStyleSheet(R"(
-    #softreboot_btn { height: 120px; border-radius: 15px; background-color: #e2e22c; }
-    #softreboot_btn:pressed { background-color: #ffe224; }
-    #reboot_btn { height: 120px; border-radius: 15px; background-color: #e2872c; }
-    #reboot_btn:pressed { background-color: #ff9724; }
+    #reboot_btn { height: 120px; border-radius: 15px; background-color: #393939; }
+    #reboot_btn:pressed { background-color: #4a4a4a; }
     #poweroff_btn { height: 120px; border-radius: 15px; background-color: #E22C2C; }
     #poweroff_btn:pressed { background-color: #FF2424; }
   )");
@@ -382,18 +344,6 @@ void DevicePanel::reboot() {
   }
 }
 
-void DevicePanel::softreboot() {
-  if (!uiState()->engaged()) {
-    if (ConfirmationDialog::confirm(tr("Are you sure you want to soft reboot?"), tr("Soft Reboot"), this)) {
-      if (!uiState()->engaged()) {
-        params.putBool("DoSoftReboot", true);
-      }
-    }
-  } else {
-    ConfirmationDialog::alert(tr("Disengage to Soft Reboot"), this);
-  }
-}
-
 void DevicePanel::poweroff() {
   if (!uiState()->engaged()) {
     if (ConfirmationDialog::confirm(tr("Are you sure you want to power off?"), tr("Power Off"), this)) {
@@ -405,6 +355,24 @@ void DevicePanel::poweroff() {
   } else {
     ConfirmationDialog::alert(tr("Disengage to Power Off"), this);
   }
+}
+
+void DevicePanel::showEvent(QShowEvent *event) {
+  pair_device->setVisible(uiState()->primeType() == PrimeType::UNPAIRED);
+  ListWidget::showEvent(event);
+}
+
+void SettingsWindow::hideEvent(QHideEvent *event) {
+  closeMapBoxInstructions();
+  closeMapSelection();
+  closePanel();
+  closeParentToggle();
+
+  mapboxInstructionsOpen = false;
+  mapSelectionOpen = false;
+  panelOpen = false;
+  parentToggleOpen = false;
+  subParentToggleOpen = false;
 }
 
 void SettingsWindow::showEvent(QShowEvent *event) {
@@ -431,25 +399,33 @@ SettingsWindow::SettingsWindow(QWidget *parent) : QFrame(parent) {
   close_btn->setStyleSheet(R"(
     QPushButton {
       font-size: 50px;
-      padding-bottom: 0px;
       border-radius: 25px;
       background-color: #292929;
       font-weight: 500;
     }
     QPushButton:pressed {
-      background-color: #3B3B3B;
+      background-color: #ADADAD;
     }
   )");
   close_btn->setFixedSize(300, 125);
   sidebar_layout->addSpacing(10);
   sidebar_layout->addWidget(close_btn, 0, Qt::AlignRight);
   QObject::connect(close_btn, &QPushButton::clicked, [this]() {
-    if (parentToggleOpen) {
-      if (subParentToggleOpen) {
-        closeSubParentToggle();
-      } else {
-        closeParentToggle();
-      }
+    if (mapboxInstructionsOpen) {
+      closeMapBoxInstructions();
+      mapboxInstructionsOpen = false;
+    } else if (mapSelectionOpen) {
+      closeMapSelection();
+      mapSelectionOpen = false;
+    } else if (subParentToggleOpen) {
+      closeSubParentToggle();
+      subParentToggleOpen = false;
+    } else if (parentToggleOpen) {
+      closeParentToggle();
+      parentToggleOpen = false;
+    } else if (panelOpen) {
+      closePanel();
+      panelOpen = false;
     } else {
       closeSettings();
     }
@@ -462,29 +438,24 @@ SettingsWindow::SettingsWindow(QWidget *parent) : QFrame(parent) {
 
   TogglesPanel *toggles = new TogglesPanel(this);
   QObject::connect(this, &SettingsWindow::expandToggleDescription, toggles, &TogglesPanel::expandToggleDescription);
+
+  // FrogPilot panels
   QObject::connect(toggles, &TogglesPanel::updateMetric, this, &SettingsWindow::updateMetric);
 
-  FrogPilotControlsPanel *frogpilotControls = new FrogPilotControlsPanel(this);
-  QObject::connect(frogpilotControls, &FrogPilotControlsPanel::closeSubParentToggle, this, [this]() {subParentToggleOpen = false;});
-  QObject::connect(frogpilotControls, &FrogPilotControlsPanel::openSubParentToggle, this, [this]() {subParentToggleOpen = true;});
-  QObject::connect(frogpilotControls, &FrogPilotControlsPanel::closeParentToggle, this, [this]() {parentToggleOpen = false;});
-  QObject::connect(frogpilotControls, &FrogPilotControlsPanel::openParentToggle, this, [this]() {parentToggleOpen = true;});
-
-  FrogPilotVisualsPanel *frogpilotVisuals = new FrogPilotVisualsPanel(this);
-  QObject::connect(frogpilotVisuals, &FrogPilotVisualsPanel::closeSubParentToggle, this, [this]() {subParentToggleOpen = false;});
-  QObject::connect(frogpilotVisuals, &FrogPilotVisualsPanel::openSubParentToggle, this, [this]() {subParentToggleOpen = true;});
-  QObject::connect(frogpilotVisuals, &FrogPilotVisualsPanel::closeParentToggle, this, [this]() {parentToggleOpen = false;});
-  QObject::connect(frogpilotVisuals, &FrogPilotVisualsPanel::openParentToggle, this, [this]() {parentToggleOpen = true;});
+  FrogPilotSettingsWindow *frogpilotSettingsWindow = new FrogPilotSettingsWindow(this);
+  QObject::connect(frogpilotSettingsWindow, &FrogPilotSettingsWindow::closeMapBoxInstructions, [this]() {mapboxInstructionsOpen=false;});
+  QObject::connect(frogpilotSettingsWindow, &FrogPilotSettingsWindow::openMapBoxInstructions, [this]() {mapboxInstructionsOpen=true;});
+  QObject::connect(frogpilotSettingsWindow, &FrogPilotSettingsWindow::openMapSelection, [this]() {mapSelectionOpen=true;});
+  QObject::connect(frogpilotSettingsWindow, &FrogPilotSettingsWindow::openPanel, [this]() {panelOpen=true;});
+  QObject::connect(frogpilotSettingsWindow, &FrogPilotSettingsWindow::openParentToggle, [this]() {parentToggleOpen=true;});
+  QObject::connect(frogpilotSettingsWindow, &FrogPilotSettingsWindow::openSubParentToggle, [this]() {subParentToggleOpen=true;});
 
   QList<QPair<QString, QWidget *>> panels = {
     {tr("Device"), device},
     {tr("Network"), new Networking(this)},
     {tr("Toggles"), toggles},
     {tr("Software"), new SoftwarePanel(this)},
-    {tr("Controls"), frogpilotControls},
-    {tr("Navigation"), new FrogPilotNavigationPanel(this)},
-    {tr("Vehicles"), new FrogPilotVehiclesPanel(this)},
-    {tr("Visuals"), frogpilotVisuals},
+    {tr("FrogPilot"), frogpilotSettingsWindow},
   };
 
   nav_btns = new QButtonGroup(this);
@@ -517,22 +488,61 @@ SettingsWindow::SettingsWindow(QWidget *parent) : QFrame(parent) {
     ScrollView *panel_frame = new ScrollView(panel, this);
     panel_widget->addWidget(panel_frame);
 
-    if (name == tr("Controls") || name == tr("Visuals")) {
-      QScrollBar *scrollbar = panel_frame->verticalScrollBar();
-
-      QObject::connect(scrollbar, &QScrollBar::valueChanged, this, [this](int value) {
-        if (!parentToggleOpen) {
-          previousScrollPosition = value;
-        }
-      });
-
-      QObject::connect(scrollbar, &QScrollBar::rangeChanged, this, [this, panel_frame]() {
-        panel_frame->restorePosition(previousScrollPosition);
-      });
-    }
-
     QObject::connect(btn, &QPushButton::clicked, [=, w = panel_frame]() {
-      previousScrollPosition = 0;
+      if (w->widget() == frogpilotSettingsWindow) {
+        bool tuningLevelConfirmed = params.getBool("TuningLevelConfirmed");
+
+        if (!tuningLevelConfirmed) {
+          int frogpilotHours = paramsTracking.getInt("FrogPilotMinutes") / 60;
+          int openpilotHours = params.getInt("openpilotMinutes") / 60;
+
+          if (frogpilotHours < 1 && openpilotHours < 100) {
+            if (ConfirmationDialog::alert(tr("Welcome to FrogPilot! Since you're new to FrogPilot, the \"Minimal\" toggle preset has been applied, but you can change this at any time via the 'Tuning Level' button!"), this, true)) {
+              params.putBool("TuningLevelConfirmed", true);
+              params.putInt("TuningLevel", 0);
+            }
+          } else if (frogpilotHours < 50 && openpilotHours < 100) {
+            if (ConfirmationDialog::alert(tr("Since you're fairly new to FrogPilot, the \"Minimal\" toggle preset has been applied, but you can change this at any time via the 'Tuning Level' button!"), this, true)) {
+              params.putBool("TuningLevelConfirmed", true);
+              params.putInt("TuningLevel", 0);
+            }
+          } else if (frogpilotHours < 100) {
+            if (openpilotHours >= 100) {
+              if (ConfirmationDialog::alert(tr("Since you're experienced with openpilot, the \"Standard\" toggle preset has been applied, but you can change this at any time via the 'Tuning Level' button!"), this, true)) {
+                params.putBool("TuningLevelConfirmed", true);
+                params.putInt("TuningLevel", 1);
+              }
+            } else {
+              if (ConfirmationDialog::alert(tr("Since you're experienced with FrogPilot, the \"Standard\" toggle preset has been applied, but you can change this at any time via the 'Tuning Level' button!"), this, true)) {
+                params.putBool("TuningLevelConfirmed", true);
+                params.putInt("TuningLevel", 1);
+              }
+            }
+          } else if (frogpilotHours >= 100) {
+            if (ConfirmationDialog::alert(tr("Since you're very experienced with FrogPilot, the \"Advanced\" toggle preset has been applied, but you can change this at any time via the 'Tuning Level' button!"), this, true)) {
+              params.putBool("TuningLevelConfirmed", true);
+              params.putInt("TuningLevel", 2);
+            }
+          }
+        }
+      }
+
+      if (mapboxInstructionsOpen) {
+        closeMapBoxInstructions();
+        mapboxInstructionsOpen = false;
+      }
+      if (mapSelectionOpen) {
+        closeMapSelection();
+        mapSelectionOpen = false;
+      }
+      if (panelOpen) {
+        closePanel();
+        panelOpen = false;
+      }
+      if (parentToggleOpen) {
+        closeParentToggle();
+        parentToggleOpen = false;
+      }
       btn->setChecked(true);
       panel_widget->setCurrentWidget(w);
     });

@@ -10,7 +10,7 @@
 #include "common/params.h"
 #include "selfdrive/ui/qt/offroad/driverview.h"
 #include "selfdrive/ui/qt/body.h"
-#include "selfdrive/ui/qt/onroad.h"
+#include "selfdrive/ui/qt/onroad/onroad_home.h"
 #include "selfdrive/ui/qt/sidebar.h"
 #include "selfdrive/ui/qt/widgets/controls.h"
 #include "selfdrive/ui/qt/widgets/offroad_alerts.h"
@@ -33,7 +33,6 @@ private:
   Params params;
 
   QTimer* timer;
-  ElidedLabel* date;
   ElidedLabel* version;
   QStackedLayout* center_layout;
   UpdateAlert *update_widget;
@@ -42,7 +41,7 @@ private:
   QPushButton* update_notif;
 
   // FrogPilot variables
-  std::map<QString, QString> MODEL_NAME;
+  ElidedLabel* date;
 };
 
 class HomeWindow : public QWidget {
@@ -57,7 +56,7 @@ signals:
 
 public slots:
   void offroadTransition(bool offroad);
-  void showDriverView(bool show);
+  void showDriverView(bool show, bool started=false);
   void showSidebar(bool show);
   void showMapPanel(bool show);
 

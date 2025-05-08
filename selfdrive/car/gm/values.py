@@ -1,13 +1,10 @@
-from collections import defaultdict
-from dataclasses import dataclass
-from enum import Enum, IntFlag, StrEnum
-from typing import Dict, List, Union
+from dataclasses import dataclass, field
+from enum import IntFlag
 
 from cereal import car
 from openpilot.common.numpy_fast import interp
-from openpilot.common.params import Params
-from openpilot.selfdrive.car import dbc_dict
-from openpilot.selfdrive.car.docs_definitions import CarFootnote, CarHarness, CarInfo, CarParts, Column
+from openpilot.selfdrive.car import dbc_dict, PlatformConfig, DbcDict, Platforms, CarSpecs
+from openpilot.selfdrive.car.docs_definitions import CarHarness, CarDocs, CarParts
 from openpilot.selfdrive.car.fw_query_definitions import FwQueryConfig, Request, StdQueries
 
 Ecu = car.CarParams.Ecu
@@ -51,19 +48,14 @@ class CarControllerParams:
       self.INACTIVE_REGEN = 5650
       # Camera ACC vehicles have no regen while enabled.
       # Camera transitions to MAX_ACC_REGEN from ZERO_GAS and uses friction brakes instantly
-      max_regen_acceleration = 0.
-
-      if CP.carFingerprint in SLOW_ACC and Params().get_bool("GasRegenCmd"):
-        self.MAX_GAS = 8650
-        self.MAX_GAS_PLUS = 8650 # Don't Stack Extra Speed
-        self.ACCEL_MAX_PLUS = 2
+      self.max_regen_acceleration = 0.
 
     elif CP.carFingerprint in SDGM_CAR:
       self.MAX_GAS = 7496
       self.MAX_GAS_PLUS = 7496
       self.MAX_ACC_REGEN = 5610
       self.INACTIVE_REGEN = 5650
-      max_regen_acceleration = 0.
+      self.max_regen_acceleration = 0.
 
     else:
       self.MAX_GAS = 7168  # Safety limit, not ACC max. Stock ACC >8192 from standstill.
@@ -72,14 +64,14 @@ class CarControllerParams:
       self.INACTIVE_REGEN = 5500
       # ICE has much less engine braking force compared to regen in EVs,
       # lower threshold removes some braking deadzone
-      max_regen_acceleration = -1. if CP.carFingerprint in EV_CAR else -0.1
+      self.max_regen_acceleration = -1. if CP.carFingerprint in EV_CAR else -0.1
 
-    self.GAS_LOOKUP_BP = [max_regen_acceleration, 0., self.ACCEL_MAX]
-    self.GAS_LOOKUP_BP_PLUS = [max_regen_acceleration, 0., self.ACCEL_MAX_PLUS]
+    self.GAS_LOOKUP_BP = [self.max_regen_acceleration, 0., self.ACCEL_MAX]
+    self.GAS_LOOKUP_BP_PLUS = [self.max_regen_acceleration, 0., self.ACCEL_MAX_PLUS]
     self.GAS_LOOKUP_V = [self.MAX_ACC_REGEN, self.ZERO_GAS, self.MAX_GAS]
     self.GAS_LOOKUP_V_PLUS = [self.MAX_ACC_REGEN, self.ZERO_GAS, self.MAX_GAS_PLUS]
 
-    self.BRAKE_LOOKUP_BP = [self.ACCEL_MIN, max_regen_acceleration]
+    self.BRAKE_LOOKUP_BP = [self.ACCEL_MIN, self.max_regen_acceleration]
     self.BRAKE_LOOKUP_V = [self.MAX_BRAKE, 0.]
 
   # determined by letting Volt regen to a stop in L gear from 89mph,
@@ -90,49 +82,13 @@ class CarControllerParams:
 
   def update_ev_gas_brake_threshold(self, v_ego):
     gas_brake_threshold = interp(v_ego, self.EV_GAS_BRAKE_THRESHOLD_BP, self.EV_GAS_BRAKE_THRESHOLD_V)
+    self.GAS_LOOKUP_BP_PLUS = [self.max_regen_acceleration, 0., self.ACCEL_MAX_PLUS]
     self.EV_GAS_LOOKUP_BP = [gas_brake_threshold, max(0., gas_brake_threshold), self.ACCEL_MAX]
     self.EV_GAS_LOOKUP_BP_PLUS = [gas_brake_threshold, max(0., gas_brake_threshold), self.ACCEL_MAX_PLUS]
     self.EV_BRAKE_LOOKUP_BP = [self.ACCEL_MIN, gas_brake_threshold]
 
-
-class CAR(StrEnum):
-  HOLDEN_ASTRA = "HOLDEN ASTRA RS-V BK 2017"
-  VOLT = "CHEVROLET VOLT PREMIER 2017"
-  CADILLAC_ATS = "CADILLAC ATS Premium Performance 2018"
-  MALIBU = "CHEVROLET MALIBU PREMIER 2017"
-  ACADIA = "GMC ACADIA DENALI 2018"
-  BUICK_LACROSSE = "BUICK LACROSSE 2017"
-  BUICK_REGAL = "BUICK REGAL ESSENCE 2018"
-  ESCALADE = "CADILLAC ESCALADE 2017"
-  ESCALADE_ESV = "CADILLAC ESCALADE ESV 2016"
-  ESCALADE_ESV_2019 = "CADILLAC ESCALADE ESV 2019"
-  BOLT_EUV = "CHEVROLET BOLT EUV 2022"
-  SILVERADO = "CHEVROLET SILVERADO 1500 2020"
-  EQUINOX = "CHEVROLET EQUINOX 2019"
-  TRAILBLAZER = "CHEVROLET TRAILBLAZER 2021"
-  # Separate car def is required when there is no ASCM
-  # (for now) unless there is a way to detect it when it has been unplugged...
-  VOLT_CC = "CHEVROLET VOLT NO ACC"
-  BOLT_CC = "CHEVROLET BOLT EV NO ACC"
-  EQUINOX_CC = "CHEVROLET EQUINOX NO ACC"
-  SUBURBAN = "CHEVROLET SUBURBAN PREMIER 2016"
-  SUBURBAN_CC = "CHEVROLET SUBURBAN NO ACC"
-  YUKON_CC = "GMC YUKON NO ACC"
-  CT6_CC = "CADILLAC CT6 NO ACC"
-  TRAILBLAZER_CC = "CHEVROLET TRAILBLAZER 2024 NO ACC"
-  XT4 = "CADILLAC XT4 2023"
-  TRAX = "CHEVROLET TRAX 2024"
-
-
-class Footnote(Enum):
-  OBD_II = CarFootnote(
-    'Requires a <a href="https://github.com/commaai/openpilot/wiki/GM#hardware" target="_blank">community built ASCM harness</a>. ' +
-    '<b><i>NOTE: disconnecting the ASCM disables Automatic Emergency Braking (AEB).</i></b>',
-    Column.MODEL)
-
-
 @dataclass
-class GMCarInfo(CarInfo):
+class GMCarDocs(CarDocs):
   package: str = "Adaptive Cruise Control (ACC)"
 
   def init_make(self, CP: car.CarParams):
@@ -140,42 +96,150 @@ class GMCarInfo(CarInfo):
       self.car_parts = CarParts.common([CarHarness.gm])
     else:
       self.car_parts = CarParts.common([CarHarness.obd_ii])
-      self.footnotes.append(Footnote.OBD_II)
 
 
-CAR_INFO: Dict[str, Union[GMCarInfo, List[GMCarInfo]]] = {
-  CAR.HOLDEN_ASTRA: GMCarInfo("Holden Astra 2017"),
-  CAR.VOLT: GMCarInfo("Chevrolet Volt 2017-18", min_enable_speed=0, video_link="https://youtu.be/QeMCN_4TFfQ"),
-  CAR.CADILLAC_ATS: GMCarInfo("Cadillac ATS Premium Performance 2018"),
-  CAR.MALIBU: GMCarInfo("Chevrolet Malibu Premier 2017"),
-  CAR.ACADIA: GMCarInfo("GMC Acadia 2018", video_link="https://www.youtube.com/watch?v=0ZN6DdsBUZo"),
-  CAR.BUICK_LACROSSE: GMCarInfo("Buick LaCrosse 2017-19", "Driver Confidence Package 2"),
-  CAR.BUICK_REGAL: GMCarInfo("Buick Regal Essence 2018"),
-  CAR.ESCALADE: GMCarInfo("Cadillac Escalade 2017", "Driver Assist Package"),
-  CAR.ESCALADE_ESV: GMCarInfo("Cadillac Escalade ESV 2016", "Adaptive Cruise Control (ACC) & LKAS"),
-  CAR.ESCALADE_ESV_2019: GMCarInfo("Cadillac Escalade ESV 2019", "Adaptive Cruise Control (ACC) & LKAS"),
-  CAR.BOLT_EUV: [
-    GMCarInfo("Chevrolet Bolt EUV 2022-23", "Premier or Premier Redline Trim without Super Cruise Package", video_link="https://youtu.be/xvwzGMUA210"),
-    GMCarInfo("Chevrolet Bolt EV 2022-23", "2LT Trim with Adaptive Cruise Control Package"),
-  ],
-  CAR.SILVERADO: [
-    GMCarInfo("Chevrolet Silverado 1500 2020-21", "Safety Package II"),
-    GMCarInfo("GMC Sierra 1500 2020-21", "Driver Alert Package II", video_link="https://youtu.be/5HbNoBLzRwE"),
-  ],
-  CAR.EQUINOX: GMCarInfo("Chevrolet Equinox 2019-22"),
-  CAR.TRAILBLAZER: GMCarInfo("Chevrolet Trailblazer 2021-22"),
+@dataclass(frozen=True, kw_only=True)
+class GMCarSpecs(CarSpecs):
+  tireStiffnessFactor: float = 0.444  # not optimized yet
 
-  CAR.VOLT_CC: GMCarInfo("Chevrolet Volt No ACC"),
-  CAR.BOLT_CC: GMCarInfo("Chevrolet Bolt No ACC"),
-  CAR.EQUINOX_CC: GMCarInfo("Chevrolet Equinox No ACC"),
-  CAR.SUBURBAN: GMCarInfo("Chevrolet Suburban Premier 2016-2020"),
-  CAR.SUBURBAN_CC: GMCarInfo("Chevrolet Suburban No ACC"),
-  CAR.YUKON_CC: GMCarInfo("GMC Yukon No ACC"),
-  CAR.CT6_CC: GMCarInfo("Cadillac CT6 No ACC"),
-  CAR.TRAILBLAZER_CC: GMCarInfo("Chevrolet Trailblazer 2024 No ACC"),
-  CAR.XT4: GMCarInfo("Cadillac XT4 2023", "Driver Assist Package"),
-  CAR.TRAX: GMCarInfo("Chevrolet TRAX 2024"),
-}
+
+@dataclass
+class GMPlatformConfig(PlatformConfig):
+  dbc_dict: DbcDict = field(default_factory=lambda: dbc_dict('gm_global_a_powertrain_generated', 'gm_global_a_object', chassis_dbc='gm_global_a_chassis'))
+
+
+@dataclass
+class GMASCMPlatformConfig(GMPlatformConfig):
+  def init(self):
+    # ASCM is supported, but due to a janky install and hardware configuration, we are not showing in the car docs
+    self.car_docs = []
+
+
+class CAR(Platforms):
+  HOLDEN_ASTRA = GMASCMPlatformConfig(
+    [GMCarDocs("Holden Astra 2017")],
+    GMCarSpecs(mass=1363, wheelbase=2.662, steerRatio=15.7, centerToFrontRatio=0.4),
+  )
+  CHEVROLET_VOLT = GMASCMPlatformConfig(
+    [GMCarDocs("Chevrolet Volt 2017-18", min_enable_speed=0, video_link="https://youtu.be/QeMCN_4TFfQ")],
+    GMCarSpecs(mass=1607, wheelbase=2.69, steerRatio=17.7, centerToFrontRatio=0.45, tireStiffnessFactor=0.469, minEnableSpeed=-1),
+    dbc_dict=dbc_dict('gm_global_a_powertrain_volt', 'gm_global_a_object', chassis_dbc='gm_global_a_chassis')
+  )
+  CADILLAC_ATS = GMASCMPlatformConfig(
+    [GMCarDocs("Cadillac ATS Premium Performance 2018")],
+    GMCarSpecs(mass=1601, wheelbase=2.78, steerRatio=15.3),
+  )
+  CHEVROLET_MALIBU = GMASCMPlatformConfig(
+    [GMCarDocs("Chevrolet Malibu Premier 2017")],
+    GMCarSpecs(mass=1496, wheelbase=2.83, steerRatio=15.8, centerToFrontRatio=0.4),
+  )
+  GMC_ACADIA = GMASCMPlatformConfig(
+    [GMCarDocs("GMC Acadia 2018", video_link="https://www.youtube.com/watch?v=0ZN6DdsBUZo")],
+    GMCarSpecs(mass=1975, wheelbase=2.86, steerRatio=14.4, centerToFrontRatio=0.4),
+  )
+  BUICK_LACROSSE = GMASCMPlatformConfig(
+    [GMCarDocs("Buick LaCrosse 2017-19", "Driver Confidence Package 2")],
+    GMCarSpecs(mass=1712, wheelbase=2.91, steerRatio=15.8, centerToFrontRatio=0.4),
+  )
+  BUICK_REGAL = GMASCMPlatformConfig(
+    [GMCarDocs("Buick Regal Essence 2018")],
+    GMCarSpecs(mass=1714, wheelbase=2.83, steerRatio=14.4, centerToFrontRatio=0.4),
+  )
+  CADILLAC_ESCALADE = GMASCMPlatformConfig(
+    [GMCarDocs("Cadillac Escalade 2017", "Driver Assist Package")],
+    GMCarSpecs(mass=2564, wheelbase=2.95, steerRatio=17.3),
+  )
+  CADILLAC_ESCALADE_ESV = GMASCMPlatformConfig(
+    [GMCarDocs("Cadillac Escalade ESV 2016", "Adaptive Cruise Control (ACC) & LKAS")],
+    GMCarSpecs(mass=2739, wheelbase=3.302, steerRatio=17.3, tireStiffnessFactor=1.0),
+  )
+  CADILLAC_ESCALADE_ESV_2019 = GMASCMPlatformConfig(
+    [GMCarDocs("Cadillac Escalade ESV 2019", "Adaptive Cruise Control (ACC) & LKAS")],
+    CADILLAC_ESCALADE_ESV.specs,
+  )
+  CHEVROLET_BOLT_EUV = GMPlatformConfig(
+    [
+      GMCarDocs("Chevrolet Bolt EUV 2022-23", "Premier or Premier Redline Trim without Super Cruise Package", video_link="https://youtu.be/xvwzGMUA210"),
+      GMCarDocs("Chevrolet Bolt EV 2022-23", "2LT Trim with Adaptive Cruise Control Package"),
+    ],
+    GMCarSpecs(mass=1669, wheelbase=2.63779, steerRatio=16.8, centerToFrontRatio=0.4, tireStiffnessFactor=1.0),
+  )
+  CHEVROLET_SILVERADO = GMPlatformConfig(
+    [
+      GMCarDocs("Chevrolet Silverado 1500 2020-21", "Safety Package II"),
+      GMCarDocs("GMC Sierra 1500 2020-21", "Driver Alert Package II", video_link="https://youtu.be/5HbNoBLzRwE"),
+    ],
+    GMCarSpecs(mass=2450, wheelbase=3.75, steerRatio=16.3, tireStiffnessFactor=1.0),
+  )
+  CHEVROLET_EQUINOX = GMPlatformConfig(
+    [GMCarDocs("Chevrolet Equinox 2019-22")],
+    GMCarSpecs(mass=1588, wheelbase=2.72, steerRatio=14.4, centerToFrontRatio=0.4),
+  )
+  CHEVROLET_TRAILBLAZER = GMPlatformConfig(
+    [GMCarDocs("Chevrolet Trailblazer 2021-22")],
+    GMCarSpecs(mass=1345, wheelbase=2.64, steerRatio=16.8, centerToFrontRatio=0.4, tireStiffnessFactor=1.0),
+  )
+  # Separate car def is required when there is no ASCM
+  # (for now) unless there is a way to detect it when it has been unplugged...
+  CHEVROLET_VOLT_CC = GMPlatformConfig(
+    [GMCarDocs("Chevrolet Volt 2017-18 - No-ACC", min_enable_speed=0)],
+    CHEVROLET_VOLT.specs,
+  )
+  CHEVROLET_BOLT_CC = GMPlatformConfig(
+    [
+      GMCarDocs("Chevrolet Bolt EUV 2022-23 - No-ACC"),
+      GMCarDocs("Chevrolet Bolt EV 2017-23 - No-ACC"),
+    ],
+    CHEVROLET_BOLT_EUV.specs,
+  )
+  CHEVROLET_EQUINOX_CC = GMPlatformConfig(
+    [GMCarDocs("Chevrolet Equinox 2019-22 - No-ACC")],
+    CHEVROLET_EQUINOX.specs,
+  )
+  CHEVROLET_SUBURBAN = GMPlatformConfig(
+    [GMCarDocs("Chevrolet Suburban Premier 2016-2020")],
+    CarSpecs(mass=2731, wheelbase=3.302, steerRatio=17.3, centerToFrontRatio=0.49),
+  )
+  CHEVROLET_SUBURBAN_CC = GMPlatformConfig(
+    [GMCarDocs("Chevrolet Suburban Premier 2016-2020 - No-ACC")],
+    CHEVROLET_SUBURBAN.specs,
+  )
+  GMC_YUKON_CC = GMPlatformConfig(
+    [GMCarDocs("GMC Yukon - No-ACC")],
+    CarSpecs(mass=2541, wheelbase=2.95, steerRatio=16.3, centerToFrontRatio=0.4),
+  )
+  CADILLAC_CT6_CC = GMPlatformConfig(
+    [GMCarDocs("Cadillac CT6 - No-ACC")],
+    CarSpecs(mass=2358, wheelbase=3.11, steerRatio=17.7, centerToFrontRatio=0.4),
+  )
+  CHEVROLET_TRAILBLAZER_CC = GMPlatformConfig(
+    [GMCarDocs("Chevrolet Trailblazer 2021-22 - No-ACC")],
+    CHEVROLET_TRAILBLAZER.specs,
+  )
+  CADILLAC_XT4 = GMPlatformConfig(
+    [GMCarDocs("Cadillac XT4 2023", "Driver Assist Package")],
+    CarSpecs(mass=1660, wheelbase=2.78, steerRatio=14.4, centerToFrontRatio=0.4),
+  )
+  CADILLAC_XT5_CC = GMPlatformConfig(
+    [GMCarDocs("Cadillac XT5 - No-ACC")],
+    CarSpecs(mass=1810, wheelbase=2.86, steerRatio=16.34, centerToFrontRatio=0.5),
+  )
+  CHEVROLET_TRAVERSE = GMPlatformConfig(
+    [GMCarDocs("Chevrolet Traverse 2023", "Driver Assist Package")],
+    CarSpecs(mass=1955, wheelbase=3.07, steerRatio=17.9, centerToFrontRatio=0.4),
+  )
+  BUICK_BABYENCLAVE = GMPlatformConfig(
+    [GMCarDocs("Buick Baby Enclave 2020-23", "Driver Assist Package")],
+    CarSpecs(mass=2050, wheelbase=2.86, steerRatio=16.0, centerToFrontRatio=0.5),
+  )
+  CHEVROLET_MALIBU_CC = GMPlatformConfig(
+    [GMCarDocs("Chevrolet Malibu 2023 - No-ACC")],
+    CarSpecs(mass=1450, wheelbase=2.8, steerRatio=15.8, centerToFrontRatio=0.4),
+  )
+  CHEVROLET_TRAX = GMPlatformConfig(
+    [GMCarDocs("Chevrolet TRAX 2024")],
+    CarSpecs(mass=1365, wheelbase=2.7, steerRatio=16.4, centerToFrontRatio=0.4),
+  )
 
 
 class CruiseButtons:
@@ -210,22 +274,35 @@ class GMFlags(IntFlag):
 # In a Data Module, an identifier is a string used to recognize an object,
 # either by itself or together with the identifiers of parent objects.
 # Each returns a 4 byte hex representation of the decimal part number. `b"\x02\x8c\xf0'"` -> 42790951
+GM_BOOT_SOFTWARE_PART_NUMER_REQUEST = b'\x1a\xc0'  # likely does not contain anything useful
 GM_SOFTWARE_MODULE_1_REQUEST = b'\x1a\xc1'
 GM_SOFTWARE_MODULE_2_REQUEST = b'\x1a\xc2'
 GM_SOFTWARE_MODULE_3_REQUEST = b'\x1a\xc3'
+
+# Part number of XML data file that is used to configure ECU
+GM_XML_DATA_FILE_PART_NUMBER = b'\x1a\x9c'
+GM_XML_CONFIG_COMPAT_ID = b'\x1a\x9b'  # used to know if XML file is compatible with the ECU software/hardware
+
 # This DID is for identifying the part number that reflects the mix of hardware,
 # software, and calibrations in the ECU when it first arrives at the vehicle assembly plant.
 # If there's an Alpha Code, it's associated with this part number and stored in the DID $DB.
 GM_END_MODEL_PART_NUMBER_REQUEST = b'\x1a\xcb'
+GM_END_MODEL_PART_NUMBER_ALPHA_CODE_REQUEST = b'\x1a\xdb'
 GM_BASE_MODEL_PART_NUMBER_REQUEST = b'\x1a\xcc'
+GM_BASE_MODEL_PART_NUMBER_ALPHA_CODE_REQUEST = b'\x1a\xdc'
 GM_FW_RESPONSE = b'\x5a'
 
 GM_FW_REQUESTS = [
+  GM_BOOT_SOFTWARE_PART_NUMER_REQUEST,
   GM_SOFTWARE_MODULE_1_REQUEST,
   GM_SOFTWARE_MODULE_2_REQUEST,
   GM_SOFTWARE_MODULE_3_REQUEST,
+  GM_XML_DATA_FILE_PART_NUMBER,
+  GM_XML_CONFIG_COMPAT_ID,
   GM_END_MODEL_PART_NUMBER_REQUEST,
+  GM_END_MODEL_PART_NUMBER_ALPHA_CODE_REQUEST,
   GM_BASE_MODEL_PART_NUMBER_REQUEST,
+  GM_BASE_MODEL_PART_NUMBER_ALPHA_CODE_REQUEST,
 ]
 
 GM_RX_OFFSET = 0x400
@@ -243,21 +320,18 @@ FW_QUERY_CONFIG = FwQueryConfig(
   extra_ecus=[(Ecu.fwdCamera, 0x24b, None)],
 )
 
-DBC: Dict[str, Dict[str, str]] = defaultdict(lambda: dbc_dict('gm_global_a_powertrain_generated', 'gm_global_a_object', chassis_dbc='gm_global_a_chassis'))
-DBC[CAR.VOLT] = dbc_dict('gm_global_a_powertrain_volt', 'gm_global_a_object', chassis_dbc='gm_global_a_chassis')
-DBC[CAR.VOLT_CC] = DBC[CAR.VOLT]
-
-EV_CAR = {CAR.VOLT, CAR.BOLT_EUV, CAR.VOLT_CC, CAR.BOLT_CC}
-CC_ONLY_CAR = {CAR.VOLT_CC, CAR.BOLT_CC, CAR.EQUINOX_CC, CAR.SUBURBAN_CC, CAR.YUKON_CC, CAR.CT6_CC, CAR.TRAILBLAZER_CC}
+EV_CAR = {CAR.CHEVROLET_VOLT, CAR.CHEVROLET_BOLT_EUV, CAR.CHEVROLET_VOLT_CC, CAR.CHEVROLET_BOLT_CC}
+CC_ONLY_CAR = {CAR.CHEVROLET_VOLT_CC, CAR.CHEVROLET_BOLT_CC, CAR.CHEVROLET_EQUINOX_CC, CAR.CHEVROLET_SUBURBAN_CC, CAR.GMC_YUKON_CC, CAR.CADILLAC_CT6_CC, CAR.CHEVROLET_TRAILBLAZER_CC, CAR.CADILLAC_XT5_CC, CAR.CHEVROLET_MALIBU_CC}
+# CC_ONLY_CAR = set(c for c in CAR if str(c).endswith('_CC'))
 
 # We're integrated at the Safety Data Gateway Module on these cars
-SDGM_CAR = {CAR.XT4}
-
-# Slow acceleration cars
-SLOW_ACC = {CAR.SILVERADO}
+SDGM_CAR = {CAR.CADILLAC_XT4, CAR.CHEVROLET_TRAVERSE, CAR.BUICK_BABYENCLAVE}
 
 # We're integrated at the camera with VOACC on these cars (instead of ASCM w/ OBD-II harness)
-CAMERA_ACC_CAR = {CAR.BOLT_EUV, CAR.SILVERADO, CAR.EQUINOX, CAR.TRAILBLAZER, CAR.TRAX}
-CAMERA_ACC_CAR.update({CAR.VOLT_CC, CAR.BOLT_CC, CAR.EQUINOX_CC, CAR.YUKON_CC, CAR.CT6_CC, CAR.TRAILBLAZER_CC})
+CAMERA_ACC_CAR = {CAR.CHEVROLET_BOLT_EUV, CAR.CHEVROLET_SILVERADO, CAR.CHEVROLET_EQUINOX, CAR.CHEVROLET_TRAILBLAZER, CAR.CHEVROLET_TRAX}
+CAMERA_ACC_CAR.update({CAR.CHEVROLET_VOLT_CC, CAR.CHEVROLET_BOLT_CC, CAR.CHEVROLET_EQUINOX_CC, CAR.GMC_YUKON_CC, CAR.CADILLAC_CT6_CC, CAR.CHEVROLET_TRAILBLAZER_CC, CAR.CADILLAC_XT5_CC, CAR.CHEVROLET_MALIBU_CC})
+# CAMERA_ACC_CAR.update(CC_ONLY_CAR)
 
 STEER_THRESHOLD = 1.0
+
+DBC = CAR.create_dbc_map()

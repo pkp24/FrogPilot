@@ -1,121 +1,46 @@
 #pragma once
 
-#include "selfdrive/frogpilot/ui/frogpilot_ui_functions.h"
-#include "selfdrive/ui/qt/network/wifi_manager.h"
-#include "selfdrive/ui/qt/offroad/settings.h"
-#include "selfdrive/ui/qt/widgets/scrollview.h"
-#include "selfdrive/ui/ui.h"
+#include "selfdrive/frogpilot/ui/qt/offroad/frogpilot_settings.h"
 
-class Primeless : public QWidget {
+class FrogPilotNavigationPanel : public FrogPilotListWidget {
   Q_OBJECT
 
 public:
-  explicit Primeless(QWidget *parent = nullptr);
+  explicit FrogPilotNavigationPanel(FrogPilotSettingsWindow *parent);
+
+signals:
+  void closeMapBoxInstructions();
+  void openMapBoxInstructions();
 
 protected:
-  void mousePressEvent(QMouseEvent *event) override;
-  void hideEvent(QHideEvent *event) override;
+  void hideEvent(QHideEvent *event);
+  void showEvent(QShowEvent *event) override;
 
 private:
-  void createMapboxKeyControl(ButtonControl *&control, const QString &label, const std::string &paramKey, const QString &prefix);
-  void updateState();
+  void createMapboxKeyControl(ButtonControl *&control, const QString &label, const std::string &paramKey, const QString &prefix, FrogPilotListWidget *list);
+  void mousePressEvent(QMouseEvent *event);
+  void updateButtons();
+  void updateState(const UIState &s);
   void updateStep();
-
-  QVBoxLayout *mainLayout;
-  FrogPilotListWidget *list;
-
-  QPushButton *backButton;
-  QLabel *imageLabel;
-
-  ButtonControl *publicMapboxKeyControl;
-  ButtonControl *secretMapboxKeyControl;
-  LabelControl *ipLabel;
-
-  WifiManager *wifi;
 
   bool mapboxPublicKeySet;
   bool mapboxSecretKeySet;
   bool setupCompleted;
-  QPixmap pixmap;
-  QString currentStep = "../assets/images/setup_completed.png";
+
+  ButtonControl *amapKeyControl1;
+  ButtonControl *amapKeyControl2;
+  ButtonControl *googleKeyControl;
+  ButtonControl *publicMapboxKeyControl;
+  ButtonControl *secretMapboxKeyControl;
+
+  FrogPilotSettingsWindow *parent;
+
+  LabelControl *ipLabel;
 
   Params params;
+  Params params_cache{"/cache/params"};
 
-signals:
-  void backPress();
-};
+  QLabel *imageLabel;
 
-class SelectMaps : public QWidget {
-  Q_OBJECT
-
-public:
-  explicit SelectMaps(QWidget *parent = nullptr);
-
-  QFrame *horizontalLine(QWidget *parent = nullptr) const;
-
-private:
-  void hideEvent(QHideEvent *event);
-
-  ScrollView *countriesScrollView;
-  ScrollView *statesScrollView;
-  QStackedLayout *mapsLayout;
-
-  QPushButton *backButton;
-  QPushButton *statesButton;
-  QPushButton *countriesButton;
-
-  static QString activeButtonStyle;
-  static QString normalButtonStyle;
-
-signals:
-  void backPress();
-  void setMaps();
-};
-
-class FrogPilotNavigationPanel : public QFrame {
-  Q_OBJECT
-
-public:
-  explicit FrogPilotNavigationPanel(QWidget *parent = 0);
-
-private:
-  void cancelDownload(QWidget *parent);
-  void checkIfUpdateMissed();
-  void downloadMaps();
-  void downloadSchedule();
-  void hideEvent(QHideEvent *event);
-  void removeMaps(QWidget *parent);
-  void setMaps();
-  void updateDownloadedLabel();
-  void updateState();
-  void updateStatuses();
-  void updateVisibility(bool visibility);
-
-  QStackedLayout *mainLayout;
-  QWidget *navigationWidget;
-
-  ButtonControl *cancelDownloadButton;
-  ButtonControl *downloadOfflineMapsButton;
-  ButtonControl *redownloadOfflineMapsButton;
-  ButtonControl *removeOfflineMapsButton;
-
-  LabelControl *lastMapsDownload;
-  LabelControl *offlineMapsSize;
-  LabelControl *offlineMapsStatus;
-  LabelControl *offlineMapsETA;
-  LabelControl *offlineMapsElapsed;
-
-  bool downloadActive;
-  bool previousDownloadActive;
-  bool scheduleCompleted;
-  bool schedulePending;
-  int schedule;
-  QString elapsedTime;
-  QString offlineFolderPath = "/data/media/0/osm/offline";
-  std::string osmDownloadProgress;
-  std::string previousOSMDownloadProgress;
-
-  Params params;
-  Params paramsMemory{"/dev/shm/params"};
-  UIScene &scene;
+  QStackedLayout *primelessLayout;
 };

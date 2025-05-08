@@ -18,7 +18,7 @@ from openpilot.selfdrive.navd.helpers import (Coordinate, coordinate_from_param,
                                     parse_banner_instructions)
 from openpilot.common.swaglog import cloudlog
 
-from openpilot.selfdrive.frogpilot.functions.speed_limit_controller import SpeedLimitController
+from openpilot.selfdrive.frogpilot.frogpilot_variables import get_frogpilot_toggles
 
 REROUTE_DISTANCE = 25
 MANEUVER_TRANSITION_THRESHOLD = 10
@@ -31,7 +31,6 @@ class RouteEngine:
     self.pm = pm
 
     self.params = Params()
-    self.params_memory = Params("/dev/shm/params")
 
     # Get last gps position from params
     self.last_position = coordinate_from_param("LastGPSPosition", self.params)
@@ -52,35 +51,28 @@ class RouteEngine:
 
     self.reroute_counter = 0
 
+
+    self.api = None
+    self.mapbox_token = None
     if "MAPBOX_TOKEN" in os.environ:
       self.mapbox_token = os.environ["MAPBOX_TOKEN"]
       self.mapbox_host = "https://api.mapbox.com"
-      self.params.put("MapboxPublicKey", self.mapbox_token)
-    elif self.params.get_int("PrimeType") == 0:
-      self.mapbox_token = self.params.get("MapboxPublicKey", encoding='utf8')
-      self.mapbox_host = "https://api.mapbox.com"
     else:
-      try:
-        self.mapbox_token = Api(self.params.get("DongleId", encoding='utf8')).get_token(expiry_hours=4 * 7 * 24)
-      except FileNotFoundError:
-        cloudlog.exception("Failed to generate mapbox token due to missing private key. Ensure device is registered.")
-        self.mapbox_token = ""
-      self.mapbox_host = "https://maps.comma.ai"
+      self.mapbox_token = self.params.get("MapboxSecretKey", encoding='utf8')
+      self.mapbox_host = "https://api.mapbox.com"
 
     # FrogPilot variables
-    self.stop_coord = []
-    self.stop_signal = []
+    self.frogpilot_toggles = get_frogpilot_toggles()
 
     self.approaching_intersection = False
     self.approaching_turn = False
 
-    self.update_frogpilot_params()
+    self.nav_speed_limit = 0
+
+    self.stop_coord = []
+    self.stop_signal = []
 
   def update(self):
-    # Update FrogPilot parameters
-    if self.params_memory.get_bool("FrogPilotTogglesUpdated"):
-      self.update_frogpilot_params()
-
     self.sm.update(0)
 
     if self.sm.updated["managerState"]:
@@ -97,6 +89,10 @@ class RouteEngine:
       self.send_instruction()
     except Exception:
       cloudlog.exception("navd.failed_to_compute")
+
+    # Update FrogPilot parameters
+    if self.sm['frogpilotPlan'].togglesUpdated:
+      self.frogpilot_toggles = get_frogpilot_toggles()
 
   def update_location(self):
     location = self.sm['liveLocationKalman']
@@ -143,8 +139,12 @@ class RouteEngine:
     if lang is not None:
       lang = lang.replace('main_', '')
 
+    token = self.mapbox_token
+    if token is None:
+      token = self.api.get_token()
+
     params = {
-      'access_token': self.mapbox_token,
+      'access_token': token,
       'annotations': 'maxspeed',
       'geometries': 'geojson',
       'overview': 'full',
@@ -179,6 +179,7 @@ class RouteEngine:
 
       r = resp.json()
       r1 = resp.json()
+
       # Function to remove specified keys recursively unnessary for display
       def remove_keys(obj, keys_to_remove):
         if isinstance(obj, list):
@@ -187,13 +188,16 @@ class RouteEngine:
           return {key: remove_keys(value, keys_to_remove) for key, value in obj.items() if key not in keys_to_remove}
         else:
           return obj
+
       keys_to_remove = ['geometry', 'annotation', 'incidents', 'intersections', 'components', 'sub', 'waypoints']
       self.r2 = remove_keys(r1, keys_to_remove)
       self.r3 = {}
+
       # Add items for display under "routes"
       if 'routes' in self.r2 and len(self.r2['routes']) > 0:
         first_route = self.r2['routes'][0]
         nav_destination_json = self.params.get('NavDestination')
+
         try:
           nav_destination_data = json.loads(nav_destination_json)
           place_name = nav_destination_data.get('place_name', 'Default Place Name')
@@ -203,7 +207,8 @@ class RouteEngine:
           self.r3['uuid'] = self.r2['uuid']
         except json.JSONDecodeError as e:
           print(f"Error decoding JSON: {e}")
-	  # Save slim json as file
+
+      # Save slim json as file
       with open('navdirections.json', 'w') as json_file:
         json.dump(self.r2, json_file, indent=4)
       with open('CurrentStep.json', 'w') as json_file:
@@ -214,9 +219,10 @@ class RouteEngine:
         self.route_geometry = []
 
         # Iterate through the steps in self.route to find "stop_sign" and "traffic_light"
-        if self.conditional_navigation_intersections:
+        if self.frogpilot_toggles.conditional_navigation_intersections:
           self.stop_signal = []
           self.stop_coord = []
+
           for step in self.route:
             for intersection in step["intersections"]:
               if "stop_sign" in intersection or "traffic_signal" in intersection:
@@ -262,15 +268,14 @@ class RouteEngine:
 
   def send_instruction(self):
     msg = messaging.new_message('navInstruction', valid=True)
+    fp_msg = messaging.new_message('frogpilotNavigation', valid=True)
 
     if self.step_idx is None:
       msg.valid = False
-      SpeedLimitController.nav_speed_limit = 0
-      SpeedLimitController.write_nav_state()
-
-      if SpeedLimitController.desired_speed_limit != 0:
-        msg.navInstruction.speedLimit = SpeedLimitController.desired_speed_limit
       self.pm.send('navInstruction', msg)
+
+      fp_msg.frogpilotNavigation.navigationSpeedLimit = 0
+      self.pm.send('frogpilotNavigation', fp_msg)
       return
 
     step = self.route[self.step_idx]
@@ -344,14 +349,9 @@ class RouteEngine:
 
     if ('maxspeed' in closest.annotations) and self.localizer_valid:
       msg.navInstruction.speedLimit = closest.annotations['maxspeed']
-      SpeedLimitController.nav_speed_limit = closest.annotations['maxspeed']
-      SpeedLimitController.write_nav_state()
+      self.nav_speed_limit = closest.annotations['maxspeed']
     if not self.localizer_valid or ('maxspeed' not in closest.annotations):
-      SpeedLimitController.nav_speed_limit = 0
-      SpeedLimitController.write_nav_state()
-
-    if SpeedLimitController.desired_speed_limit != 0:
-      msg.navInstruction.speedLimit = SpeedLimitController.desired_speed_limit
+      self.nav_speed_limit = 0
 
     # Speed limit sign type
     if 'speedLimitSign' in step:
@@ -367,6 +367,7 @@ class RouteEngine:
       if self.step_idx + 1 < len(self.route):
         self.step_idx += 1
         self.reset_recompute_limits()
+
         # Update the 'CurrentStep' value in the JSON
         if 'routes' in self.r2 and len(self.r2['routes']) > 0:
           self.r3['CurrentStep'] = self.step_idx
@@ -382,35 +383,30 @@ class RouteEngine:
           self.params.remove("NavDestination")
           self.clear_route()
 
-    # 5-10 Seconds to stop condition based on v_ego or minimum of 25 meters
-    if self.conditional_navigation:
+    if self.frogpilot_toggles.conditional_navigation:
       v_ego = self.sm['carState'].vEgo
-      seconds_to_stop = interp(v_ego, [0, 22.3, 44.7], [5, 10, 10])
-      # Determine the location of the closest upcoming stopSign or trafficLight
+      seconds_to_stop = interp(v_ego, [0, 22.5, 45], [5, 10, 10])
+
       closest_condition_indices = [idx for idx in self.stop_signal if idx >= closest_idx]
       if closest_condition_indices:
         closest_condition_index = min(closest_condition_indices, key=lambda idx: abs(closest_idx - idx))
         index = self.stop_signal.index(closest_condition_index)
 
-        # Calculate the distance to the stopSign or trafficLight
         distance_to_condition = self.last_position.distance_to(self.stop_coord[index])
-        self.approaching_intersection = self.conditional_navigation_intersections and distance_to_condition < max((seconds_to_stop * v_ego), 25)
+        self.approaching_intersection = self.frogpilot_toggles.conditional_navigation_intersections and distance_to_condition < max((seconds_to_stop * v_ego), 25)
       else:
-        self.approaching_intersection = False  # No more stopSign or trafficLight in array
+        self.approaching_intersection = False
 
-      # Determine if NoO distance to maneuver is upcoming
-      self.approaching_turn = self.conditional_navigation_turns and distance_to_maneuver_along_geometry < max((seconds_to_stop * v_ego), 25)
+      self.approaching_turn = self.frogpilot_toggles.conditional_navigation_turns and distance_to_maneuver_along_geometry < max((seconds_to_stop * v_ego), 25)
     else:
       self.approaching_intersection = False
       self.approaching_turn = False
 
-    frogpilot_plan_send = messaging.new_message('frogpilotNavigation')
-    frogpilotNavigation = frogpilot_plan_send.frogpilotNavigation
+    fp_msg.frogpilotNavigation.approachingIntersection = self.approaching_intersection
+    fp_msg.frogpilotNavigation.approachingTurn = self.approaching_turn
+    fp_msg.frogpilotNavigation.navigationSpeedLimit = self.nav_speed_limit
 
-    frogpilotNavigation.approachingIntersection = self.approaching_intersection
-    frogpilotNavigation.approachingTurn = self.approaching_turn
-
-    self.pm.send('frogpilotNavigation', frogpilot_plan_send)
+    self.pm.send('frogpilotNavigation', fp_msg)
 
   def send_route(self):
     coords = []
@@ -460,14 +456,10 @@ class RouteEngine:
     return self.reroute_counter > REROUTE_COUNTER_MIN
     # TODO: Check for going wrong way in segment
 
-  def update_frogpilot_params(self):
-    self.conditional_navigation = self.params.get_bool("CENavigation")
-    self.conditional_navigation_intersections = self.conditional_navigation and self.params.get_bool("CENavigationIntersections")
-    self.conditional_navigation_turns = self.conditional_navigation and self.params.get_bool("CENavigationTurns")
 
 def main():
   pm = messaging.PubMaster(['navInstruction', 'navRoute', 'frogpilotNavigation'])
-  sm = messaging.SubMaster(['carState', 'liveLocationKalman', 'managerState'])
+  sm = messaging.SubMaster(['carState', 'liveLocationKalman', 'managerState', 'frogpilotPlan'])
 
   rk = Ratekeeper(1.0)
   route_engine = RouteEngine(sm, pm)

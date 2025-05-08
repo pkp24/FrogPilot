@@ -82,11 +82,11 @@ void Networking::connectToNetwork(const Network n) {
   if (wifi->isKnownConnection(n.ssid)) {
     wifi->activateWifiConnection(n.ssid);
   } else if (n.security_type == SecurityType::OPEN) {
-    wifi->connect(n);
+    wifi->connect(n, false);
   } else if (n.security_type == SecurityType::WPA) {
     QString pass = InputDialog::getText(tr("Enter password"), this, tr("for \"%1\"").arg(QString::fromUtf8(n.ssid)), true, 8);
     if (!pass.isEmpty()) {
-      wifi->connect(n, pass);
+      wifi->connect(n, false, pass);
     }
   }
 }
@@ -96,7 +96,7 @@ void Networking::wrongPassword(const QString &ssid) {
     const Network &n = wifi->seenNetworks.value(ssid);
     QString pass = InputDialog::getText(tr("Wrong password"), this, tr("for \"%1\"").arg(QString::fromUtf8(n.ssid)), true, 8);
     if (!pass.isEmpty()) {
-      wifi->connect(n, pass);
+      wifi->connect(n, false, pass);
     }
   }
 }
@@ -127,13 +127,19 @@ AdvancedNetworking::AdvancedNetworking(QWidget* parent, WifiManager* wifi): QWid
 
   ListWidget *list = new ListWidget(this);
   // Enable tethering layout
-  tetheringToggle = new ToggleControl(tr("Enable Tethering"), "", "", wifi->isTetheringEnabled());
-  list->addItem(tetheringToggle);
-  QObject::connect(tetheringToggle, &ToggleControl::toggleFlipped, this, &AdvancedNetworking::toggleTethering);
-  if (params.getBool("TetheringEnabled")) {
-    tetheringToggle->refresh();
-    uiState()->scene.tethering_enabled = true;
+  std::vector<QString> tetheringSelection{tr("Off"), tr("Always"), tr("Only Onroad"), tr("Until Reboot")};
+  tetheringToggle = new ButtonParamControl("TetheringEnabled", tr("Enable Tethering"),
+                                           tr("Allow tethering with your data SIM and keep it active either while driving or continuously."),
+                                           "", tetheringSelection);
+  if (params.getInt("TetheringEnabled") == 3) {
+    params.remove("TetheringEnabled");
+    tetheringToggle->setCheckedButton(0);
   }
+  QButtonGroup *buttonGroup = tetheringToggle->findChild<QButtonGroup *>();
+  list->addItem(tetheringToggle);
+  QObject::connect(buttonGroup, QOverload<int>::of(&QButtonGroup::buttonClicked), [this](int id) {
+    toggleTethering(id);
+  });
 
   // Change tethering password
   ButtonControl *editPasswordButton = new ButtonControl(tr("Tethering Password"), tr("EDIT"));
@@ -196,9 +202,9 @@ AdvancedNetworking::AdvancedNetworking(QWidget* parent, WifiManager* wifi): QWid
       hidden_network.ssid = ssid.toUtf8();
       if (!pass.isEmpty()) {
         hidden_network.security_type = SecurityType::WPA;
-        wifi->connect(hidden_network, pass);
+        wifi->connect(hidden_network, true, pass);
       } else {
-        wifi->connect(hidden_network);
+        wifi->connect(hidden_network, true);
       }
       emit requestWifiScreen();
     }
@@ -225,11 +231,9 @@ void AdvancedNetworking::refresh() {
   update();
 }
 
-void AdvancedNetworking::toggleTethering(bool enabled) {
-  wifi->setTetheringEnabled(enabled);
+void AdvancedNetworking::toggleTethering(int id) {
+  wifi->setTetheringEnabled(id == 1 || id == 3);
   tetheringToggle->setEnabled(false);
-  params.putBool("TetheringEnabled", enabled);
-  uiState()->scene.tethering_enabled = enabled;
 }
 
 // WifiUI functions

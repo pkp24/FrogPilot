@@ -32,6 +32,7 @@ cdef extern from "common/params.h":
     string getParamPath(string) nogil
     void clearAll(ParamKeyType)
     vector[string] allKeys()
+    ParamKeyType getKeyType(string) nogil
 
 
 def ensure_bytes(v):
@@ -156,3 +157,7 @@ cdef class Params:
 
   def all_keys(self):
     return self.p.allKeys()
+
+  def get_key_type(self, key):
+    cdef string k = self.check_key(key)
+    return self.p.getKeyType(k)

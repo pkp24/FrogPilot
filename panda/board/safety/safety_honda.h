@@ -107,7 +107,8 @@ bool honda_fwd_brake = false;
 bool honda_bosch_long = false;
 bool honda_bosch_radarless = false;
 bool honda_clarity_brake_msg = false;
-enum {HONDA_NIDEC, HONDA_BOSCH} honda_hw = HONDA_NIDEC;
+typedef enum {HONDA_NIDEC, HONDA_BOSCH} HondaHw;
+HondaHw honda_hw = HONDA_NIDEC;
 
 
 int honda_get_pt_bus(void) {
@@ -358,7 +359,7 @@ static bool honda_tx_hook(const CANPacket_t *to_send) {
 
   // STEER: safety check
   if ((addr == 0xE4) || (addr == 0x194)) {
-    bool aol_allowed = acc_main_on && (alternative_experience & ALT_EXP_DISABLE_DISENGAGE_ON_GAS);
+    bool aol_allowed = acc_main_on && (alternative_experience & ALT_EXP_ALWAYS_ON_LATERAL);
     if (!(controls_allowed || aol_allowed)) {
       bool steer_applied = GET_BYTE(to_send, 0) | GET_BYTE(to_send, 1);
       if (steer_applied) {
@@ -414,6 +415,7 @@ static safety_config honda_nidec_init(uint16_t param) {
   safety_config ret;
 
   bool enable_nidec_alt = GET_FLAG(param, HONDA_PARAM_NIDEC_ALT);
+
   if (enable_nidec_alt) {
     enable_gas_interceptor ? SET_RX_CHECKS(honda_nidec_alt_interceptor_rx_checks, ret) : \
                              SET_RX_CHECKS(honda_nidec_alt_rx_checks, ret);

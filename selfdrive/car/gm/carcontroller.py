@@ -3,10 +3,12 @@ from openpilot.common.conversions import Conversions as CV
 from openpilot.common.filter_simple import FirstOrderFilter
 from openpilot.common.numpy_fast import interp, clip
 from openpilot.common.realtime import DT_CTRL
+from openpilot.common.params_pyx import Params
 from opendbc.can.packer import CANPacker
 from openpilot.selfdrive.car import apply_driver_steer_torque_limits, create_gas_interceptor_command
 from openpilot.selfdrive.car.gm import gmcan
-from openpilot.selfdrive.car.gm.values import DBC, CanBus, CarControllerParams, CruiseButtons, GMFlags, CC_ONLY_CAR, EV_CAR, SDGM_CAR
+from openpilot.selfdrive.car.gm.values import DBC, CanBus, CarControllerParams, CruiseButtons, GMFlags, CC_ONLY_CAR, SDGM_CAR, EV_CAR, AccState
+from openpilot.selfdrive.car.interfaces import CarControllerBase
 from openpilot.selfdrive.controls.lib.drive_helpers import apply_deadzone
 from openpilot.selfdrive.controls.lib.vehicle_model import ACCELERATION_DUE_TO_GRAVITY
 
@@ -26,7 +28,7 @@ PITCH_DEADZONE = 0.01  # [radians] 0.01 ≈ 1% grade
 BRAKE_PITCH_FACTOR_BP = [5., 10.]  # [m/s] smoothly revert to planned accel at low speeds
 BRAKE_PITCH_FACTOR_V = [0., 1.]  # [unitless in [0,1]]; don't touch
 
-class CarController:
+class CarController(CarControllerBase):
   def __init__(self, dbc_name, CP, VM):
     self.CP = CP
     self.start_time = 0.
@@ -44,6 +46,7 @@ class CarController:
     self.lka_icon_status_last = (False, False)
 
     self.params = CarControllerParams(self.CP)
+    self.params_ = Params()
 
     self.packer_pt = CANPacker(DBC[self.CP.carFingerprint]['pt'])
     self.packer_obj = CANPacker(DBC[self.CP.carFingerprint]['radar'])
@@ -68,9 +71,9 @@ class CarController:
     return pedal_gas
 
 
-  def update(self, CC, CS, now_nanos, frogpilot_variables):
+  def update(self, CC, CS, now_nanos, frogpilot_toggles):
     actuators = CC.actuators
-    accel = actuators.accel
+    accel = brake_accel = actuators.accel
     hud_control = CC.hudControl
     hud_alert = hud_control.visualAlert
     hud_v_cruise = hud_control.setSpeed
@@ -117,17 +120,18 @@ class CarController:
       # Gas/regen, brakes, and UI commands - all at 25Hz
       if self.frame % 4 == 0:
         stopping = actuators.longControlState == LongCtrlState.stopping
-        at_full_stop = CC.longActive and CS.out.standstill
-        near_stop = CC.longActive and (CS.out.vEgo < self.params.NEAR_STOP_BRAKE_PHASE)
-        interceptor_gas_cmd = 0
 
         # Pitch compensated acceleration;
         # TODO: include future pitch (sm['modelDataV2'].orientation.y) to account for long actuator delay
-        if frogpilot_variables.long_pitch and len(CC.orientationNED) > 1:
+        if frogpilot_toggles.long_pitch and len(CC.orientationNED) > 1:
           self.pitch.update(CC.orientationNED[1])
           self.accel_g = ACCELERATION_DUE_TO_GRAVITY * apply_deadzone(self.pitch.x, PITCH_DEADZONE) # driving uphill is positive pitch
           accel += self.accel_g
+          brake_accel = actuators.accel + self.accel_g * interp(CS.out.vEgo, BRAKE_PITCH_FACTOR_BP, BRAKE_PITCH_FACTOR_V)
 
+        at_full_stop = CC.longActive and CS.out.standstill
+        near_stop = CC.longActive and (CS.out.vEgo < self.params.NEAR_STOP_BRAKE_PHASE)
+        interceptor_gas_cmd = 0
         if not CC.longActive:
           # ASCM sends max regen when not enabled
           self.apply_gas = self.params.INACTIVE_REGEN
@@ -137,20 +141,19 @@ class CarController:
           self.apply_brake = int(min(-100 * self.CP.stopAccel, self.params.MAX_BRAKE))
         else:
           # Normal operation
-          brake_accel = actuators.accel + self.accel_g * interp(CS.out.vEgo, BRAKE_PITCH_FACTOR_BP, BRAKE_PITCH_FACTOR_V)
-          if self.CP.carFingerprint in EV_CAR and frogpilot_variables.use_ev_tables:
+          if self.CP.carFingerprint in EV_CAR:
             self.params.update_ev_gas_brake_threshold(CS.out.vEgo)
-            if frogpilot_variables.sport_plus:
-              self.apply_gas = int(round(interp(accel if frogpilot_variables.long_pitch else actuators.accel, self.params.EV_GAS_LOOKUP_BP_PLUS, self.params.GAS_LOOKUP_V_PLUS)))
+            if frogpilot_toggles.sport_plus:
+              self.apply_gas = int(round(interp(accel, self.params.EV_GAS_LOOKUP_BP_PLUS, self.params.GAS_LOOKUP_V_PLUS)))
             else:
-              self.apply_gas = int(round(interp(accel if frogpilot_variables.long_pitch else actuators.accel, self.params.EV_GAS_LOOKUP_BP, self.params.GAS_LOOKUP_V)))
-            self.apply_brake = int(round(interp(brake_accel if frogpilot_variables.long_pitch else actuators.accel, self.params.EV_BRAKE_LOOKUP_BP, self.params.BRAKE_LOOKUP_V)))
+              self.apply_gas = int(round(interp(accel, self.params.EV_GAS_LOOKUP_BP, self.params.GAS_LOOKUP_V)))
+            self.apply_brake = int(round(interp(brake_accel, self.params.EV_BRAKE_LOOKUP_BP, self.params.BRAKE_LOOKUP_V)))
           else:
-            if frogpilot_variables.sport_plus:
-              self.apply_gas = int(round(interp(accel if frogpilot_variables.long_pitch else actuators.accel, self.params.GAS_LOOKUP_BP_PLUS, self.params.GAS_LOOKUP_V_PLUS)))
+            if frogpilot_toggles.sport_plus:
+              self.apply_gas = int(round(interp(accel, self.params.GAS_LOOKUP_BP_PLUS, self.params.GAS_LOOKUP_V_PLUS)))
             else:
-              self.apply_gas = int(round(interp(accel if frogpilot_variables.long_pitch else actuators.accel, self.params.GAS_LOOKUP_BP, self.params.GAS_LOOKUP_V)))
-            self.apply_brake = int(round(interp(brake_accel if frogpilot_variables.long_pitch else actuators.accel, self.params.BRAKE_LOOKUP_BP, self.params.BRAKE_LOOKUP_V)))
+              self.apply_gas = int(round(interp(accel, self.params.GAS_LOOKUP_BP, self.params.GAS_LOOKUP_V)))
+            self.apply_brake = int(round(interp(brake_accel, self.params.BRAKE_LOOKUP_BP, self.params.BRAKE_LOOKUP_V)))
           # Don't allow any gas above inactive regen while stopping
           # FIXME: brakes aren't applied immediately when enabling at a stop
           if stopping:
@@ -185,15 +188,20 @@ class CarController:
             resume = actuators.longControlState != LongCtrlState.starting or CC.cruiseControl.resume
             at_full_stop = at_full_stop and not resume
 
+          if CC.cruiseControl.resume and CS.pcm_acc_status == AccState.STANDSTILL and frogpilot_toggles.volt_sng:
+            acc_engaged = False
+          else:
+            acc_engaged = CC.enabled
+
           # GasRegenCmdActive needs to be 1 to avoid cruise faults. It describes the ACC state, not actuation
-          can_sends.append(gmcan.create_gas_regen_command(self.packer_pt, CanBus.POWERTRAIN, self.apply_gas, idx, CC.enabled, at_full_stop))
+          can_sends.append(gmcan.create_gas_regen_command(self.packer_pt, CanBus.POWERTRAIN, self.apply_gas, idx, acc_engaged, at_full_stop))
           can_sends.append(gmcan.create_friction_brake_command(self.packer_ch, friction_brake_bus, self.apply_brake,
-                                                               idx, CC.enabled, near_stop, at_full_stop, self.CP))
+                                                             idx, CC.enabled, near_stop, at_full_stop, self.CP))
 
           # Send dashboard UI commands (ACC status)
           send_fcw = hud_alert == VisualAlert.fcw
           can_sends.append(gmcan.create_acc_dashboard_command(self.packer_pt, CanBus.POWERTRAIN, CC.enabled,
-                                                              hud_v_cruise * CV.MS_TO_KPH, hud_control.leadVisible, send_fcw, CS.display_menu, CS.personality_profile))
+                                                              hud_v_cruise * CV.MS_TO_KPH, hud_control, send_fcw))
       else:
         # to keep accel steady for logs when not sending gas
         accel += self.accel_g
@@ -245,7 +253,7 @@ class CarController:
       if self.frame % 10 == 0:
         can_sends.append(gmcan.create_pscm_status(self.packer_pt, CanBus.CAMERA, CS.pscm_status))
 
-    new_actuators = actuators.copy()
+    new_actuators = actuators.as_builder()
     new_actuators.accel = accel
     new_actuators.steer = self.apply_steer_last / self.params.STEER_MAX
     new_actuators.steerOutputCan = self.apply_steer_last

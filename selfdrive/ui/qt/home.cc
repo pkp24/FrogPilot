@@ -7,12 +7,14 @@
 
 #include "selfdrive/ui/qt/offroad/experimental_mode.h"
 #include "selfdrive/ui/qt/util.h"
-#include "selfdrive/ui/qt/widgets/drive_stats.h"
 #include "selfdrive/ui/qt/widgets/prime.h"
 
 #ifdef ENABLE_MAPS
 #include "selfdrive/ui/qt/maps/map_settings.h"
 #endif
+
+#include "selfdrive/frogpilot/ui/qt/widgets/drive_stats.h"
+#include "selfdrive/frogpilot/ui/qt/widgets/model_reviewer.h"
 
 // HomeWindow: the container for the offroad and onroad UIs
 
@@ -66,6 +68,13 @@ void HomeWindow::updateState(const UIState &s) {
     body->setEnabled(true);
     slayout->setCurrentWidget(body);
   }
+
+  if (s.scene.started) {
+    showDriverView(s.scene.driver_camera_timer >= 10, true);
+    if (s.scene.map_open) {
+      showSidebar(false);
+    }
+  }
 }
 
 void HomeWindow::offroadTransition(bool offroad) {
@@ -74,18 +83,25 @@ void HomeWindow::offroadTransition(bool offroad) {
   if (offroad) {
     slayout->setCurrentWidget(home);
   } else {
+    showSidebar(params.getBool("Sidebar"));
     slayout->setCurrentWidget(onroad);
   }
 }
 
-void HomeWindow::showDriverView(bool show) {
+void HomeWindow::showDriverView(bool show, bool started) {
   if (show) {
     emit closeSettings();
     slayout->setCurrentWidget(driver_view);
+    sidebar->setVisible(show == false);
   } else {
-    slayout->setCurrentWidget(home);
+    if (started) {
+      slayout->setCurrentWidget(onroad);
+      sidebar->setVisible(params.getBool("Sidebar"));
+    } else {
+      slayout->setCurrentWidget(home);
+      sidebar->setVisible(show == false);
+    }
   }
-  sidebar->setVisible(show == false);
 }
 
 void HomeWindow::mousePressEvent(QMouseEvent* e) {
@@ -150,20 +166,26 @@ OffroadHome::OffroadHome(QWidget* parent) : QFrame(parent) {
     home_layout->setContentsMargins(0, 0, 0, 0);
     home_layout->setSpacing(30);
 
-    // left: MapSettings/PrimeAdWidget
+    // left: MapSettings
     QStackedWidget *left_widget = new QStackedWidget(this);
 #ifdef ENABLE_MAPS
     left_widget->addWidget(new MapSettings);
 #else
     left_widget->addWidget(new QWidget);
 #endif
-    left_widget->addWidget(new PrimeAdWidget);
     left_widget->addWidget(new DriveStats);
-    left_widget->setStyleSheet("border-radius: 10px;");
 
-    left_widget->setCurrentIndex(params.getBool("DriveStats") ? 2 : uiState()->hasPrime() ? 0 : 1);
-    connect(uiState(), &UIState::primeChanged, [=](bool prime) {
-      left_widget->setCurrentIndex(params.getBool("DriveStats") ? 2 : uiState()->hasPrime() ? 0 : 1);
+    ModelReview *modelReview = new ModelReview(this);
+    left_widget->addWidget(modelReview);
+
+    left_widget->setStyleSheet("border-radius: 10px;");
+    left_widget->setCurrentIndex(1);
+
+    connect(modelReview, &ModelReview::driveRated, [=]() {
+      left_widget->setCurrentIndex(1);
+    });
+    connect(uiState(), &UIState::reviewModel, [=]() {
+      left_widget->setCurrentIndex(2);
     });
 
     home_layout->addWidget(left_widget, 1);
@@ -201,6 +223,8 @@ OffroadHome::OffroadHome(QWidget* parent) : QFrame(parent) {
   timer = new QTimer(this);
   timer->callOnTimeout(this, &OffroadHome::refresh);
 
+  QObject::connect(uiState(), &UIState::togglesUpdated, this, &OffroadHome::refresh);
+
   setStyleSheet(R"(
     * {
       color: white;
@@ -218,13 +242,6 @@ OffroadHome::OffroadHome(QWidget* parent) : QFrame(parent) {
       font-size: 55px;
     }
   )");
-
-  // Set the model name
-  MODEL_NAME = {
-    {"los-angeles", "Los Angeles"},
-    {"certified-herbalist", "Certified Herbalist"},
-    {"recertified-herbalist", "Recertified Herbalist"},
-  };
 }
 
 void OffroadHome::showEvent(QShowEvent *event) {
@@ -237,10 +254,12 @@ void OffroadHome::hideEvent(QHideEvent *event) {
 }
 
 void OffroadHome::refresh() {
-  QString model = QString::fromStdString(params.get("Model"));
+  QString model = processModelName(uiState()->scene.model_name);
 
   date->setText(QLocale(uiState()->language.mid(5)).toString(QDateTime::currentDateTime(), "dddd, MMMM d"));
-  version->setText(getBrand() + " v" + getVersion().left(14).trimmed() + " - " + MODEL_NAME[model]);
+  version->setText(getBrand() + " v" + getVersion().left(14).trimmed() + " - " + model);
+
+  date->setVisible(util::system_time_valid());
 
   bool updateAvailable = update_widget->refresh();
   int alerts = alerts_widget->refresh();
