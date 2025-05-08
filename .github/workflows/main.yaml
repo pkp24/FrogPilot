@@ -4,148 +4,122 @@ on:
     - cron: '*/30 * * * *' # Runs every 30 minutes
   workflow_dispatch:
 
+permissions:
+  contents: write   # Only non-workflow operations use GITHUB_TOKEN
+
 jobs:
   compare-commits:
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout with PAT
+        uses: actions/checkout@v3
+        with:
+          token: ${{ secrets.MY_PERSONAL_ACCESS_TOKEN }}
+          persist-credentials: false
+
       - name: Find most recent upstream commit for FrogPilot
         id: upstream_commit_frogpilot
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          UPSTREAM_COMMIT_JSON=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
-          -H "Accept: application/vnd.github.v3+json" \
-          "https://api.github.com/repos/FrogAi/FrogPilot/commits?per_page=1")
-          echo "Upstream Commit JSON for FrogPilot: $UPSTREAM_COMMIT_JSON"
-          UPSTREAM_COMMIT=$(echo $UPSTREAM_COMMIT_JSON | jq -r '.[0].sha')
-          echo "UPSTREAM_COMMIT_FROGPILOT=$UPSTREAM_COMMIT" >> $GITHUB_ENV
+          UPSTREAM_COMMIT_JSON=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Accept: application/vnd.github.v3+json" \
+            "https://api.github.com/repos/FrogAi/FrogPilot/commits?per_page=1")
+          echo "UPSTREAM_COMMIT_FROGPILOT=$(echo "$UPSTREAM_COMMIT_JSON" | jq -r '.[0].sha')" >> $GITHUB_ENV
 
       - name: Find most recent upstream commit for FrogPilot-Staging
         id: upstream_commit_staging
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          UPSTREAM_COMMIT_STAGING_JSON=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
-          -H "Accept: application/vnd.github.v3+json" \
-          "https://api.github.com/repos/FrogAi/FrogPilot/branches/FrogPilot-Staging")
-          echo "Upstream Commit JSON for FrogPilot-Staging: $UPSTREAM_COMMIT_STAGING_JSON"
-          UPSTREAM_COMMIT=$(echo $UPSTREAM_COMMIT_STAGING_JSON | jq -r '.commit.sha')
-          echo "UPSTREAM_COMMIT_STAGING=$UPSTREAM_COMMIT" >> $GITHUB_ENV
+          UPSTREAM_COMMIT_STAGING_JSON=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Accept: application/vnd.github.v3+json" \
+            "https://api.github.com/repos/FrogAi/FrogPilot/branches/FrogPilot-Staging")
+          echo "UPSTREAM_COMMIT_STAGING=$(echo "$UPSTREAM_COMMIT_STAGING_JSON" | jq -r '.commit.sha')" >> $GITHUB_ENV
 
-      
       - name: Find most recent upstream commit for FrogPilot-Testing
         id: upstream_commit_testing
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          UPSTREAM_COMMIT_TESTING_JSON=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
-          -H "Accept: application/vnd.github.v3+json" \
-          "https://api.github.com/repos/FrogAi/FrogPilot/branches/FrogPilot-Testing")
-          echo "Upstream Commit JSON for FrogPilot-Testing: $UPSTREAM_COMMIT_TESTING_JSON"
-          UPSTREAM_COMMIT=$(echo $UPSTREAM_COMMIT_TESTING_JSON | jq -r '.commit.sha')
-          echo "UPSTREAM_COMMIT_TESTING=$UPSTREAM_COMMIT" >> $GITHUB_ENV
-
+          UPSTREAM_COMMIT_TESTING_JSON=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Accept: application/vnd.github.v3+json" \
+            "https://api.github.com/repos/FrogAi/FrogPilot/branches/FrogPilot-Testing")
+          echo "UPSTREAM_COMMIT_TESTING=$(echo "$UPSTREAM_COMMIT_TESTING_JSON" | jq -r '.commit.sha')" >> $GITHUB_ENV
 
       - name: Find your most recent commit for FrogPilot (excluding your commits and actions bot)
         id: your_commit_frogpilot
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          YOUR_COMMIT_JSON=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
-          -H "Accept: application/vnd.github.v3+json" \
-          "https://api.github.com/repos/pkp24/FrogPilot/commits?per_page=100")
-          echo "Your Commit JSON for FrogPilot: $YOUR_COMMIT_JSON"
-          YOUR_COMMIT=$(echo $YOUR_COMMIT_JSON | jq '[.[] | select(.author.login != "actions-user" and .author.login != "pkp24")][0].sha' -r)
-          echo "YOUR_COMMIT_FROGPILOT=$YOUR_COMMIT" >> $GITHUB_ENV
+          YOUR_COMMIT_JSON=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Accept: application/vnd.github.v3+json" \
+            "https://api.github.com/repos/pkp24/FrogPilot/commits?per_page=100")
+          echo "YOUR_COMMIT_FROGPILOT=$(echo "$YOUR_COMMIT_JSON" | jq '[.[] | select(.author.login != "actions-user" and .author.login != "pkp24")][0].sha' -r)" >> $GITHUB_ENV
 
-      - name: Find your most recent commit for FrogPilot-Staging (excluding your commits and actions bot)
+      - name: Find your most recent commit for FrogPilot-Staging
         id: your_commit_staging
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          YOUR_COMMIT_STAGING_JSON=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
-          -H "Accept: application/vnd.github.v3+json" \
-          "https://api.github.com/repos/pkp24/FrogPilot/branches/FrogPilot-Staging")
-          echo "Your Commit JSON for FrogPilot-Staging: $YOUR_COMMIT_STAGING_JSON"
-          YOUR_COMMIT=$(echo $YOUR_COMMIT_STAGING_JSON | jq -r '.commit.sha')
-          echo "YOUR_COMMIT_STAGING=$YOUR_COMMIT" >> $GITHUB_ENV
+          YOUR_COMMIT_STAGING_JSON=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Accept: application/vnd.github.v3+json" \
+            "https://api.github.com/repos/pkp24/FrogPilot/branches/FrogPilot-Staging")
+          echo "YOUR_COMMIT_STAGING=$(echo "$YOUR_COMMIT_STAGING_JSON" | jq -r '.commit.sha')" >> $GITHUB_ENV
 
-      
-      - name: Find your most recent commit for FrogPilot-Testing (excluding your commits and actions bot)
+      - name: Find your most recent commit for FrogPilot-Testing
         id: your_commit_testing
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          YOUR_COMMIT_TESTING_JSON=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
-          -H "Accept: application/vnd.github.v3+json" \
-          "https://api.github.com/repos/pkp24/FrogPilot/branches/FrogPilot-Testing")
-          echo "Your Commit JSON for FrogPilot-Testing: $YOUR_COMMIT_TESTING_JSON"
-          YOUR_COMMIT=$(echo $YOUR_COMMIT_TESTING_JSON | jq -r '.commit.sha')
-          echo "YOUR_COMMIT_TESTING=$YOUR_COMMIT" >> $GITHUB_ENV
-
+          YOUR_COMMIT_TESTING_JSON=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Accept: application/vnd.github.v3+json" \
+            "https://api.github.com/repos/pkp24/FrogPilot/branches/FrogPilot-Testing")
+          echo "YOUR_COMMIT_TESTING=$(echo "$YOUR_COMMIT_TESTING_JSON" | jq -r '.commit.sha')" >> $GITHUB_ENV
 
       - name: Display commit information
         run: |
-          echo "Upstream Commit for FrogPilot: $UPSTREAM_COMMIT_FROGPILOT"
-          echo "Your Commit for FrogPilot: $YOUR_COMMIT_FROGPILOT"
-          echo "Upstream Commit for FrogPilot-Staging: $UPSTREAM_COMMIT_STAGING"
-          echo "Your Commit for FrogPilot-Staging: $YOUR_COMMIT_STAGING"
-          echo "Upstream Commit for FrogPilot-Testing: $UPSTREAM_COMMIT_TESTING"
-          echo "Your Commit for FrogPilot-Testing: $YOUR_COMMIT_TESTING"
-          
+          echo "Upstream/FrogPilot: $UPSTREAM_COMMIT_FROGPILOT"
+          echo "Your/FrogPilot:     $YOUR_COMMIT_FROGPILOT"
+          echo "Upstream/Staging:   $UPSTREAM_COMMIT_STAGING"
+          echo "Your/Staging:       $YOUR_COMMIT_STAGING"
+          echo "Upstream/Testing:   $UPSTREAM_COMMIT_TESTING"
+          echo "Your/Testing:       $YOUR_COMMIT_TESTING"
+
       - name: Compare commits and sync branches
         env:
-          MY_PAT: ${{ secrets.MY_PERSONAL_ACCESS_TOKEN }}
-
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_ACTOR: ${{ github.actor }}
+          PAT: ${{ secrets.MY_PERSONAL_ACCESS_TOKEN }}
         run: |
           # Sync FrogPilot branch
-          
+          if [ "$UPSTREAM_COMMIT_FROGPILOT" != "$YOUR_COMMIT_FROGPILOT" ]; then
+            git clone --depth 1 https://github.com/pkp24/FrogPilot.git FrogPilot
+            cd FrogPilot
+            git config user.name "GitHub Actions"
+            git config user.email "actions@github.com"
+            git remote add upstream https://github.com/FrogAi/FrogPilot.git
+            git fetch upstream FrogPilot --depth 1
+            git reset --hard upstream/FrogPilot
+            git push https://$GITHUB_ACTOR:$PAT@github.com/pkp24/FrogPilot.git HEAD:FrogPilot --force
+            cd .. && rm -rf FrogPilot
+          else
+            echo "FrogPilot branch is up to date."
+          fi
 
           # Sync FrogPilot-Staging branch
           if [ "$UPSTREAM_COMMIT_STAGING" != "$YOUR_COMMIT_STAGING" ]; then
-            echo "FrogPilot-Staging branch has updates from the upstream. Syncing..."
             git clone --depth 1 https://github.com/pkp24/FrogPilot.git FrogPilot-Staging
             cd FrogPilot-Staging
             git config user.name "GitHub Actions"
             git config user.email "actions@github.com"
             git remote add upstream https://github.com/FrogAi/FrogPilot.git
             git fetch upstream FrogPilot-Staging --depth 1
-            
-            # Reset local FrogPilot-Staging to match upstream/FrogPilot-Staging exactly
             git reset --hard upstream/FrogPilot-Staging
-            git push --verbose https://$GITHUB_ACTOR:$GITHUB_TOKEN@github.com/pkp24/FrogPilot.git HEAD:FrogPilot-Staging --force
-
-            cd ..
-            rm -rf FrogPilot-Staging  # Remove the directory after sync
+            git push https://$GITHUB_ACTOR:$PAT@github.com/pkp24/FrogPilot.git HEAD:FrogPilot-Staging --force
+            cd .. && rm -rf FrogPilot-Staging
           else
             echo "FrogPilot-Staging branch is up to date."
           fi
 
           # Sync FrogPilot-Testing branch
           if [ "$UPSTREAM_COMMIT_TESTING" != "$YOUR_COMMIT_TESTING" ]; then
-            echo "FrogPilot-Testing branch has updates from the upstream. Syncing..."
-            # Clone the repo. No need to specify --single-branch because we're going to reset it anyway
             git clone --depth 1 https://github.com/pkp24/FrogPilot.git FrogPilot-Testing
             cd FrogPilot-Testing
-            
-            # Configure Git user (necessary for commits, but there won't be any new commits here)
             git config user.name "GitHub Actions"
             git config user.email "actions@github.com"
-            
-            # Add the upstream repository and fetch the specific branch
             git remote add upstream https://github.com/FrogAi/FrogPilot.git
             git fetch upstream FrogPilot-Testing --depth 1
-            
-            # Reset local FrogPilot-Testing to match upstream/FrogPilot-Testing exactly
             git reset --hard upstream/FrogPilot-Testing
-            
-            # Force push the branch to your repository
-            # Use your PAT in the script
-            git push https://$GITHUB_ACTOR:${MY_PAT}@github.com/pkp24/FrogPilot.git HEAD:FrogPilot-Testing --force
-
-            cd ..
-            rm -rf FrogPilot-Testing  # Clean up
+            git push https://$GITHUB_ACTOR:$PAT@github.com/pkp24/FrogPilot.git HEAD:FrogPilot-Testing --force
+            cd .. && rm -rf FrogPilot-Testing
           else
             echo "FrogPilot-Testing branch is up to date."
           fi
