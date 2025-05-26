@@ -1,0 +1,36 @@
+name: Sync Vikander Branch
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write  # Required to push updates to the repository
+
+
+jobs:
+  sync-vikander:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout default branch with PAT
+        uses: actions/checkout@v3
+        with:
+          token: ${{ secrets.MY_PERSONAL_ACCESS_TOKEN }}
+          persist-credentials: false
+
+      - name: Configure Git user
+        run: |
+          git config --global user.name "GitHub Actions"
+          git config --global user.email "actions@github.com"
+    
+      - name: Add upstream remote
+        run: |
+          git remote add upstream https://github.com/firestar5683/StarPilot.git
+          git fetch upstream Vikander --depth 1
+    
+      - name: Replace Vikander branch
+        run: |
+          # Delete local branch if it exists
+          git branch -D Vikander || true
+          # Checkout Vikander from upstream
+          git checkout -b Vikander upstream/Vikander
+          # Force-push to your fork
+          git push https://${{ github.actor }}:${{ secrets.MY_PERSONAL_ACCESS_TOKEN }}@github.com/${{ github.repository }}.git Vikander --force
