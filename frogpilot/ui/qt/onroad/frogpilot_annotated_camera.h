@@ -55,8 +55,10 @@ private:
   void paintCEMStatus(QPainter &p, const QPoint &position);
   void paintCompass(QPainter &p, const QPoint &position);
   void paintCurveSpeedControl(QPainter &p);
+  void paintTurnSignals(QPainter &p);
   void updateCEMIcon();
   void updateIcon(const QString &path, QSharedPointer<FrogPilotMovie> &icon, QString &iconPath);
+  void updateSignals();
 
   bool blindspotLeft = false;
   bool blindspotRight = false;
@@ -67,6 +69,11 @@ private:
   bool cscTraining = false;
   bool experimentalMode = false;
   bool redLight = false;
+  bool signalIsGif = false;
+
+  int signalAnimationLength = 0;
+  int signalHeight = 0;
+  int signalWidth = 0;
 
   float accelerationEgo = 0.0f;
   float cscSpeed = 0.0f;
@@ -84,14 +91,21 @@ private:
   QColor redColor(int alpha = 255) { return QColor(201, 34, 49, alpha); }
 
   QElapsedTimer glowTimer;
+  QElapsedTimer signalTimer;
 
   QPixmap curveSpeedIcon;
   QPixmap curveSpeedIconFlipped;
+
+  QRect staticSignalRect;
 
   QSharedPointer<FrogPilotMovie> cemIcon;
 
   QString cemIconPath;
   QString leadDistanceUnit;
   QString leadSpeedUnit;
+  QString signalStyle;
   QString speedUnit;
+
+  QVector<QPixmap> blindspotImages;
+  QVector<QPixmap> signalImages;
 };
