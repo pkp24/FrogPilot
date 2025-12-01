@@ -35,6 +35,12 @@ def calculate_speed_limit(CP, cp, cp_cam):
 
 
 # FrogPilot variables
+def create_sampled_button_events(button_samples, prev_button, buttons_dict):
+  events = []
+  for button in button_samples:
+    events += create_button_events(button, prev_button, buttons_dict)
+    prev_button = button
+  return events
 
 
 class CarState(CarStateBase):
@@ -209,10 +215,11 @@ class CarState(CarStateBase):
       self.lda_button = cp.vl["BCM_PO_11"]["LDA_BTN"]
 
     # FrogPilot variables
+    lda_buttons = cp.vl_all["BCM_PO_11"]["LDA_BTN"] if self.CP.flags & HyundaiFlags.HAS_LDA_BUTTON else []
 
     ret.buttonEvents = [*create_button_events(self.cruise_buttons[-1], prev_cruise_buttons, BUTTONS_DICT),
-                        *create_button_events(self.main_buttons[-1], prev_main_buttons, {1: ButtonType.mainCruise}),
-                        *create_button_events(self.lda_button, prev_lda_button, {1: ButtonType.lkas})]
+                        *create_sampled_button_events(cp.vl_all["CLU11"]["CF_Clu_CruiseSwMain"], prev_main_buttons, {1: ButtonType.mainCruise}),
+                        *create_sampled_button_events(lda_buttons, prev_lda_button, {1: ButtonType.lkas})]
 
     ret.blockPcmEnable = not self.recent_button_interaction()
 
@@ -318,8 +325,9 @@ class CarState(CarStateBase):
                                           else cp_cam.vl["CAM_0x2a4"])
 
     ret.buttonEvents = [*create_button_events(self.cruise_buttons[-1], prev_cruise_buttons, BUTTONS_DICT),
-                        *create_button_events(self.main_buttons[-1], prev_main_buttons, {1: ButtonType.mainCruise}),
-                        *create_button_events(self.lda_button, prev_lda_button, {1: ButtonType.lkas})]
+                        *create_sampled_button_events(cp.vl_all[self.cruise_btns_msg_canfd]["ADAPTIVE_CRUISE_MAIN_BTN"], prev_main_buttons,
+                                                      {1: ButtonType.mainCruise}),
+                        *create_sampled_button_events(cp.vl_all[self.cruise_btns_msg_canfd]["LDA_BTN"], prev_lda_button, {1: ButtonType.lkas})]
 
     ret.blockPcmEnable = not self.recent_button_interaction()
 
