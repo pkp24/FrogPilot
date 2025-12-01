@@ -1362,6 +1362,7 @@ class FrogPilotVariables:
     toggle.disable_openpilot_long = self.get_value("DisableOpenpilotLongitudinal", condition=toggle.can_disable_openpilot_long)
     has_bsm = CP.enableBsm
     toggle.has_dashboard_speed_limit = FPCP.hasDashboardSpeedLimit
+    toggle.has_nnff = frogpilot_utilities.nnff_supported(toggle.car_model)
     has_radar = not CP.radarUnavailable
     toggle.has_sdsu = toggle.car_make == "toyota" and bool(FPCP.flags & ToyotaFrogPilotFlags.SMART_DSU.value)
     has_sng = CP.autoResumeSng
@@ -1635,7 +1636,7 @@ class FrogPilotVariables:
     lateral_tuning = self.get_value("LateralTune")
     toggle.nnff_selected = self.get_value("NNFF", condition=lateral_tuning)
     toggle.nnff_lite_selected = self.get_value("NNFFLite", condition=lateral_tuning)
-    toggle.nnff = not is_angle_car and toggle.nnff_selected
+    toggle.nnff = toggle.has_nnff and not is_angle_car and toggle.nnff_selected
     toggle.nnff_lite = not is_angle_car and not toggle.nnff and toggle.nnff_lite_selected
     toggle.use_turn_desires = self.get_value("TurnDesires", condition=lateral_tuning)
 

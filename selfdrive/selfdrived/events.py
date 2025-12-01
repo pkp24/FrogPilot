@@ -12,6 +12,7 @@ from opendbc.car.chrysler.values import RAM_DT
 from opendbc.car.gm.values import CC_ONLY_CAR, GMFlags
 from openpilot.common.constants import CV
 from openpilot.common.git import get_short_branch
+from openpilot.common.params import Params
 from openpilot.common.realtime import DT_CTRL
 from openpilot.selfdrive.locationd.calibrationd import MIN_SPEED_FILTER
 from openpilot.system.micd import SAMPLE_RATE, SAMPLE_BUFFER
@@ -448,6 +449,14 @@ def holiday_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubMaster, 
     "",
     AlertStatus.normal, AlertSize.small,
     Priority.LOWEST, VisualAlert.none, FrogPilotAudibleAlert.startup, 5.)
+
+
+def nnff_loaded_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubMaster, metric: bool, soft_disable_time: int, personality, frogpilot_toggles: SimpleNamespace) -> Alert:
+  return Alert(
+    "NNFF Torque Controller loaded with:",
+    Params().get("NNFFModelName"),
+    FrogPilotAlertStatus.frogpilot, AlertSize.mid,
+    Priority.LOW, VisualAlert.none, AudibleAlert.engage, 5.0)
 
 
 def pedal_interceptor_no_brake_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubMaster, metric: bool, soft_disable_time: int, personality, frogpilot_toggles: SimpleNamespace) -> Alert:
@@ -1137,6 +1146,10 @@ FROGPILOT_EVENTS: dict[int, dict[str, Alert | AlertCallbackType]] = {
       "",
       FrogPilotAlertStatus.frogpilot, AlertSize.small,
       Priority.MID, VisualAlert.none, AudibleAlert.prompt, 3.),
+  },
+
+  FrogPilotEventName.nnffLoaded: {
+    ET.PERMANENT: nnff_loaded_alert,
   },
 
   FrogPilotEventName.openpilotCrashed: {
