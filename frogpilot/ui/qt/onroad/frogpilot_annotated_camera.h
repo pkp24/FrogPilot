@@ -130,6 +130,7 @@ private:
   QString cemIconPath;
   QString leadDistanceUnit;
   QString leadSpeedUnit;
+  QString roadName;
   QString signalStyle;
   QString speedUnit;
 
