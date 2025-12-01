@@ -43,6 +43,7 @@ public:
   QPoint experimentalButtonPosition;
 
   QPolygonF track_adjacent_vertices[2];
+  QPolygonF track_vertices;
 
   QRect setSpeedRect;
 
@@ -58,6 +59,7 @@ private:
   void paintCurveSpeedControl(QPainter &p);
   void paintRoadName(QPainter &p);
   void paintStandstillTimer(QPainter &p);
+  void paintStoppingPoint(QPainter &p);
   void paintTurnSignals(QPainter &p);
   void updateCEMIcon();
   void updateIcon(const QString &path, QSharedPointer<FrogPilotMovie> &icon, QString &iconPath);
@@ -99,6 +101,7 @@ private:
 
   QPixmap curveSpeedIcon;
   QPixmap curveSpeedIconFlipped;
+  QPixmap stopSignImg;
 
   QRect roadNameRect;
   QRect standstillTimerRect;
