@@ -1366,7 +1366,6 @@ class FrogPilotVariables:
     toggle.lkas_allowed_for_aol = toggle.car_make == "hyundai" and bool(CP.flags & HyundaiFlags.CANFD or CP.flags & HyundaiFlags.HAS_LDA_BUTTON)
     toggle.has_lkas_button = toggle.car_make in LKAS_BUTTON_BRANDS or toggle.lkas_allowed_for_aol or (toggle.car_make == "toyota" and bool(CP.flags & ToyotaFlags.TSS2))
     longitudinalActuatorDelay = CP.longitudinalActuatorDelay
-    toggle.maxLateralAccel = min(max(CP.maxLateralAccel, learned_lateral_acceleration), MAX_LATERAL_ACCEL_NO_ROLL)
     toggle.openpilot_longitudinal = CP.openpilotLongitudinalControl and (started or not toggle.disable_openpilot_long)
     pcm_cruise = CP.pcmCruise
     prohibited_main_aol = not toggle.openpilot_longitudinal and toggle.lkas_allowed_for_aol
@@ -1395,6 +1394,13 @@ class FrogPilotVariables:
         toggle.liveValid &= self.torque_cache_matches(CP, LTP.version)
     else:
       toggle.liveValid = False
+
+    max_lateral_accel = CP.maxLateralAccel
+    if is_angle_car:
+      max_lateral_accel = max(max_lateral_accel, learned_lateral_acceleration)
+    elif is_torque_car and toggle.liveValid:
+      max_lateral_accel *= LTP.latAccelFactorFiltered / latAccelFactor
+    toggle.maxLateralAccel = min(max_lateral_accel, MAX_LATERAL_ACCEL_NO_ROLL)
 
     toggle.debug_mode = self.params.get_bool("DebugMode")
     toggle.force_offroad = self.params.get_bool("ForceOffroad")

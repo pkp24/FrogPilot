@@ -54,6 +54,7 @@ private:
   QLinearGradient adjacentPathGradient(float hue);
   void paintCEMStatus(QPainter &p, const QPoint &position);
   void paintCompass(QPainter &p, const QPoint &position);
+  void paintCurveSpeedControl(QPainter &p);
   void updateCEMIcon();
   void updateIcon(const QString &path, QSharedPointer<FrogPilotMovie> &icon, QString &iconPath);
 
@@ -62,13 +63,17 @@ private:
   bool blinkerLeft = false;
   bool blinkerRight = false;
   bool brakeLights = false;
+  bool cscActive = false;
+  bool cscTraining = false;
   bool experimentalMode = false;
   bool redLight = false;
 
   float accelerationEgo = 0.0f;
+  float cscSpeed = 0.0f;
   float dashboardSpeedLimit = 0.0f;
   float distanceConversion = 0.0f;
   float gpsBearing = 0.0f;
+  float roadCurvature = 0.0f;
   float speedConversion = 0.0f;
   float speedConversionMetrics = 0.0f;
   float stoppingDistance = 0.0f;
@@ -77,6 +82,11 @@ private:
   InstantReplayButton *instantReplayButton;
 
   QColor redColor(int alpha = 255) { return QColor(201, 34, 49, alpha); }
+
+  QElapsedTimer glowTimer;
+
+  QPixmap curveSpeedIcon;
+  QPixmap curveSpeedIconFlipped;
 
   QSharedPointer<FrogPilotMovie> cemIcon;
 
