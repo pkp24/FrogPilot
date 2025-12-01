@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 from cereal import log
+from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import desired_follow_distance
 
 from openpilot.frogpilot.common import frogpilot_variables
 
@@ -11,10 +12,11 @@ class FrogPilotFollowing:
 
     self.acceleration_jerk = 0
     self.danger_jerk = 0
+    self.desired_follow_distance = 0
     self.speed_jerk = 0
     self.t_follow = 0
 
-  def update(self, v_ego, sm, frogpilot_toggles):
+  def update(self, long_control_active, v_ego, sm, frogpilot_toggles):
     personality = sm["selfdriveState"].personality
 
     if personality == log.LongitudinalPersonality.aggressive:
@@ -50,3 +52,8 @@ class FrogPilotFollowing:
 
     self.following_lead = self.frogpilot_planner.lead_one.status
     self.following_lead &= self.frogpilot_planner.lead_one.dRel < (self.t_follow * 2) * v_ego
+
+    if long_control_active and self.frogpilot_planner.lead_one.status:
+      self.desired_follow_distance = desired_follow_distance(v_ego, self.frogpilot_planner.lead_one.vLead, self.t_follow)
+    else:
+      self.desired_follow_distance = 0
