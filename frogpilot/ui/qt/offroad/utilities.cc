@@ -284,6 +284,9 @@ FrogPilotUtilitiesPanel::FrogPilotUtilitiesPanel(FrogPilotSettingsWindow *parent
           paramsCache.remove(key.toString().toStdString());
         }
 
+        QFile::remove("/data/speed_limit_filler.json");
+        QDir("/data/speed_limit_filler_images").removeRecursively();
+
         if (stock) {
           params.putInt("TuningLevel", 3);
           params.putBool("TuningLevelConfirmed", true);

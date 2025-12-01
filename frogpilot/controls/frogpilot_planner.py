@@ -18,6 +18,7 @@ from openpilot.frogpilot.controls.lib.frogpilot_acceleration import FrogPilotAcc
 from openpilot.frogpilot.controls.lib.frogpilot_events import FrogPilotEvents
 from openpilot.frogpilot.controls.lib.frogpilot_following import FrogPilotFollowing
 from openpilot.frogpilot.controls.lib.frogpilot_vcruise import FrogPilotVCruise
+from openpilot.frogpilot.controls.lib.speed_limit_filler import SpeedLimitFiller
 
 class FrogPilotPlanner:
   def __init__(self, ThemeManager):
@@ -28,6 +29,7 @@ class FrogPilotPlanner:
     self.frogpilot_events = FrogPilotEvents(self, ThemeManager)
     self.frogpilot_following = FrogPilotFollowing(self)
     self.frogpilot_vcruise = FrogPilotVCruise(self)
+    self.speed_limit_filler = SpeedLimitFiller()
 
     self.accel_pressed = False
     self.curve_ahead = False
@@ -118,6 +120,9 @@ class FrogPilotPlanner:
       self.last_gps_position = self.gps_position
     else:
       self.gps_position = None
+
+    if frogpilot_toggles.speed_limit_filler:
+      self.speed_limit_filler.update(self.gps_position, v_ego, sm)
 
     if v_ego >= frogpilot_toggles.minimum_lane_change_speed:
       lane_widths, road_edge_distances = frogpilot_utilities.calculate_lane_widths(sm["modelV2"])
