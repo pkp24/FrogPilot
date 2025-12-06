@@ -328,6 +328,7 @@ frogpilot_default_params: list[tuple[str, str | bytes, int, str]] = [
   ("MaxDesiredAcceleration", "4.0", 2, "2.0"),
   ("MinimumLaneChangeSpeed", str(LANE_CHANGE_SPEED_MIN / CV.MPH_TO_MS), 2, str(LANE_CHANGE_SPEED_MIN / CV.MPH_TO_MS)),
   ("Model", DEFAULT_MODEL + "_default", 1, DEFAULT_MODEL + "_default"),
+  ("ModelBrightnessAdjustment", "1.0", 2, "1.0"),
   ("ModelDrivesAndScores", "", 2, ""),
   ("ModelRandomizer", "0", 2, "0"),
   ("ModelUI", "1", 2, "0"),
@@ -916,6 +917,9 @@ class FrogPilotVariables:
     toggle.classic_model = toggle.model_version in {"v1", "v2", "v3", "v4"}
     toggle.classic_longitudinal = toggle.model_version in {"v1", "v2", "v3", "v4", "v5", "v6"}
     toggle.tinygrad_model = not toggle.classic_model and toggle.model_version not in {"v5", "v6"}
+
+    brightness_adjustment = params.get_float("ModelBrightnessAdjustment") if tuning_level >= level["ModelBrightnessAdjustment"] else default.get_float("ModelBrightnessAdjustment")
+    toggle.model_brightness_multiplier = np.clip(brightness_adjustment, 1.0, 1.5)
 
     toggle.model_ui = params.get_bool("ModelUI") if tuning_level >= level["ModelUI"] else default.get_bool("ModelUI")
     toggle.dynamic_path_width = toggle.model_ui and (params.get_bool("DynamicPathWidth") if tuning_level >= level["DynamicPathWidth"] else default.get_bool("DynamicPathWidth"))

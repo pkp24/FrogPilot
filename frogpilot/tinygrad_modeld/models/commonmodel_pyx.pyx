@@ -43,11 +43,11 @@ cdef class ModelFrame:
   def __dealloc__(self):
     del self.frame
 
-  def prepare(self, VisionBuf buf, float[:] projection):
+  def prepare(self, VisionBuf buf, float[:] projection, float brightness_multiplier = 1.0):
     cdef mat3 cprojection
     memcpy(cprojection.v, &projection[0], 9*sizeof(float))
     cdef cl_mem * data
-    data = self.frame.prepare(buf.buf.buf_cl, buf.width, buf.height, buf.stride, buf.uv_offset, cprojection)
+    data = self.frame.prepare(buf.buf.buf_cl, buf.width, buf.height, buf.stride, buf.uv_offset, cprojection, brightness_multiplier)
     return CLMem.create(data)
 
   def buffer_from_cl(self, CLMem in_frames):

@@ -52,8 +52,9 @@ class ModelState:
   prev_desire: np.ndarray  # for tracking the rising edge of the pulse
   model: ModelRunner
 
-  def __init__(self, context: CLContext, model: str, model_version: str):
+  def __init__(self, context: CLContext, model: str, model_version: str, brightness_multiplier: float = 1.0):
     # FrogPilot variables
+    self.brightness_multiplier = brightness_multiplier
     MODEL_PATHS[ModelRunner.THNEED] = MODELS_PATH / f'{model}.thneed'
 
     with open(METADATAS_PATH / f'supercombo_metadata_{model_version}.pkl', 'rb') as f:
@@ -151,7 +152,8 @@ def main(demo=False):
   cloudlog.warning("setting up CL context")
   cl_context = CLContext()
   cloudlog.warning("CL context ready; loading model")
-  model = ModelState(cl_context, model_name, model_version)
+  brightness_multiplier = frogpilot_toggles.model_brightness_multiplier
+  model = ModelState(cl_context, model_name, model_version, brightness_multiplier)
   cloudlog.warning("models loaded, modeld starting")
 
   # visionipc clients

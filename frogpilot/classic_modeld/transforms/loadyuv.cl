@@ -2,7 +2,8 @@
 
 __kernel void loadys(__global uchar8 const * const Y,
                      __global float * out,
-                     int out_offset)
+                     int out_offset,
+                     float brightness_multiplier)
 {
     const int gid = get_global_id(0);
     const int ois = gid * 8;
@@ -10,7 +11,12 @@ __kernel void loadys(__global uchar8 const * const Y,
     const int ox = ois % TRANSFORMED_WIDTH;
 
     const uchar8 ys = Y[gid];
-    const float8 ysf = convert_float8(ys);
+    float8 ysf = convert_float8(ys);
+
+    // Apply brightness adjustment
+    if (brightness_multiplier != 1.0f) {
+      ysf = ysf * brightness_multiplier;
+    }
 
     // 02
     // 13

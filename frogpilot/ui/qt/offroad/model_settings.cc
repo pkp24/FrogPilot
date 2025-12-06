@@ -1,5 +1,7 @@
 #include "frogpilot/ui/qt/offroad/model_settings.h"
 
+#include "frogpilot/ui/qt/widgets/frogpilot_controls.h"
+
 bool hasAllTinygradFiles(const QDir &modelDir, const QString &modelKey) {
   QStringList tinygradSuffixes = {
     "_driving_policy_metadata.pkl",
@@ -53,6 +55,7 @@ FrogPilotModelPanel::FrogPilotModelPanel(FrogPilotSettingsWindow *parent) : Frog
     {"AutomaticallyDownloadModels", tr("Automatically Download New Models"), tr("<b>Automatically download new driving models</b> as they become available."), ""},
     {"DeleteModel", tr("Delete Driving Models"), tr("<b>Delete downloaded driving models</b> to free up storage space."), ""},
     {"DownloadModel", tr("Download Driving Models"), tr("<b>Manually download driving models</b> to the device."), ""},
+    {"ModelBrightnessAdjustment", tr("Model Brightness Adjustment"), tr("<b>Adjust image brightness sent to the model</b> to compensate for window tint. Range: 1.0 (no adjustment) to 1.5 (+50% brightness)."), ""},
     {"ModelRandomizer", tr("Model Randomizer"), tr("<b>Select a random driving model each drive</b> and use feedback prompts at the end of the drive to help find the model that best suits you!"), ""},
     {"ManageBlacklistedModels", tr("Manage Model Blacklist"), tr("<b>Add or remove driving models from the \"Model Randomizer\" blacklist.</b>"), ""},
     {"ManageScores", tr("Manage Model Ratings"), tr("<b>View or reset saved model ratings</b> used by the \"Model Randomizer\"."), ""},
@@ -320,6 +323,8 @@ FrogPilotModelPanel::FrogPilotModelPanel(FrogPilotSettingsWindow *parent) : Frog
       });
       modelToggle = updateTinygradButton;
 
+    } else if (param == "ModelBrightnessAdjustment") {
+      modelToggle = new FrogPilotParamValueControl(param, title, desc, icon, 1.0, 1.5, QString(), std::map<float, QString>(), 0.01);
     } else {
       modelToggle = new ParamControl(param, title, desc, icon);
     }
