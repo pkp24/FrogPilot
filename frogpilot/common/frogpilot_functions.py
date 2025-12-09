@@ -4,6 +4,8 @@ from pathlib import Path
 from openpilot.common.constants import CV
 from openpilot.system.hardware import HARDWARE, PC
 
+from openpilot.frogpilot.common import frogpilot_utilities
+
 
 def frogpilot_boot_functions():
 
