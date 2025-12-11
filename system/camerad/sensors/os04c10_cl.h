@@ -45,6 +45,16 @@ float3 color_correct(float3 rgb) {
   return corrected;
 }
 
+float3 tint_compensate(float3 rgb) {
+  // Ceramic tint compensation - optimized parameters for 30% ceramic tint
+  // R: 1.0040x, G: 0.9130x, B: 0.9640x
+  float3 compensated;
+  compensated.x = rgb.x * 1.0040f;  // R
+  compensated.y = rgb.y * 0.9130f;  // G
+  compensated.z = rgb.z * 0.9640f;  // B
+  return clamp(compensated, 0.0f, 1.0f);
+}
+
 float3 apply_gamma(float3 rgb, int expo_time) {
   float s = log2((float)expo_time);
   if (s < 6) {s = fmin(12.0 - s, 9.0);}

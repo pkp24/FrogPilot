@@ -186,7 +186,7 @@ __kernel void process_raw(const __global uchar * in, __global uchar * out, int e
   rgb_tmp.x = (k02*v_rows[1].s2+k04*v_rows[1].s0)/(k02+k04); // R_G1
   rgb_tmp.y = v_rows[1].s1; // G1(R)
   rgb_tmp.z = (k01*v_rows[0].s1+k03*v_rows[2].s1)/(k01+k03); // B_G1
-  rgb_out[RGB_WRITE_ORDER[0]] = convert_uchar3_sat(apply_gamma(color_correct(clamp(rgb_tmp, 0.0, 1.0)), expo_time) * 255.0);
+  rgb_out[RGB_WRITE_ORDER[0]] = convert_uchar3_sat(apply_gamma(tint_compensate(color_correct(clamp(rgb_tmp, 0.0, 1.0))), expo_time) * 255.0);
 
   const float k11 = get_k(v_rows[0].s1, v_rows[2].s1, v_rows[0].s3, v_rows[2].s3);
   const float k12 = get_k(v_rows[0].s2, v_rows[1].s1, v_rows[1].s3, v_rows[2].s2);
@@ -195,7 +195,7 @@ __kernel void process_raw(const __global uchar * in, __global uchar * out, int e
   rgb_tmp.x = v_rows[1].s2; // R
   rgb_tmp.y = (k11*(v_rows[0].s2+v_rows[2].s2)*0.5+k13*(v_rows[1].s3+v_rows[1].s1)*0.5)/(k11+k13); // G_R
   rgb_tmp.z = (k12*(v_rows[0].s3+v_rows[2].s1)*0.5+k14*(v_rows[0].s1+v_rows[2].s3)*0.5)/(k12+k14); // B_R
-  rgb_out[RGB_WRITE_ORDER[1]] = convert_uchar3_sat(apply_gamma(color_correct(clamp(rgb_tmp, 0.0, 1.0)), expo_time) * 255.0);
+  rgb_out[RGB_WRITE_ORDER[1]] = convert_uchar3_sat(apply_gamma(tint_compensate(color_correct(clamp(rgb_tmp, 0.0, 1.0))), expo_time) * 255.0);
 
   const float k21 = get_k(v_rows[1].s0, v_rows[3].s0, v_rows[1].s2, v_rows[3].s2);
   const float k22 = get_k(v_rows[1].s1, v_rows[2].s0, v_rows[2].s2, v_rows[3].s1);
@@ -204,7 +204,7 @@ __kernel void process_raw(const __global uchar * in, __global uchar * out, int e
   rgb_tmp.x = (k22*(v_rows[1].s2+v_rows[3].s0)*0.5+k24*(v_rows[1].s0+v_rows[3].s2)*0.5)/(k22+k24); // R_B
   rgb_tmp.y = (k21*(v_rows[1].s1+v_rows[3].s1)*0.5+k23*(v_rows[2].s2+v_rows[2].s0)*0.5)/(k21+k23); // G_B
   rgb_tmp.z = v_rows[2].s1; // B
-  rgb_out[RGB_WRITE_ORDER[2]] = convert_uchar3_sat(apply_gamma(color_correct(clamp(rgb_tmp, 0.0, 1.0)), expo_time) * 255.0);
+  rgb_out[RGB_WRITE_ORDER[2]] = convert_uchar3_sat(apply_gamma(tint_compensate(color_correct(clamp(rgb_tmp, 0.0, 1.0))), expo_time) * 255.0);
 
   const float k31 = get_k(v_rows[1].s1, v_rows[2].s2, v_rows[1].s3, v_rows[2].s2);
   const float k32 = get_k(v_rows[1].s3, v_rows[2].s2, v_rows[3].s3, v_rows[2].s2);
@@ -213,7 +213,7 @@ __kernel void process_raw(const __global uchar * in, __global uchar * out, int e
   rgb_tmp.x = (k31*v_rows[1].s2+k33*v_rows[3].s2)/(k31+k33); // R_G2
   rgb_tmp.y = v_rows[2].s2; // G2(B)
   rgb_tmp.z = (k32*v_rows[2].s3+k34*v_rows[2].s1)/(k32+k34); // B_G2
-  rgb_out[RGB_WRITE_ORDER[3]] = convert_uchar3_sat(apply_gamma(color_correct(clamp(rgb_tmp, 0.0, 1.0)), expo_time) * 255.0);
+  rgb_out[RGB_WRITE_ORDER[3]] = convert_uchar3_sat(apply_gamma(tint_compensate(color_correct(clamp(rgb_tmp, 0.0, 1.0))), expo_time) * 255.0);
 
   // rgb2yuv(nv12)
   uchar2 yy = (uchar2)(
