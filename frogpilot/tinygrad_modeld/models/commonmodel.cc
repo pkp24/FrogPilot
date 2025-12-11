@@ -18,13 +18,13 @@ DrivingModelFrame::DrivingModelFrame(cl_device_id device_id, cl_context context,
   init_transform(device_id, context, MODEL_WIDTH, MODEL_HEIGHT);
 }
 
-cl_mem* DrivingModelFrame::prepare(cl_mem yuv_cl, int frame_width, int frame_height, int frame_stride, int frame_uv_offset, const mat3& projection, float brightness_multiplier) {
+cl_mem* DrivingModelFrame::prepare(cl_mem yuv_cl, int frame_width, int frame_height, int frame_stride, int frame_uv_offset, const mat3& projection) {
   run_transform(yuv_cl, MODEL_WIDTH, MODEL_HEIGHT, frame_width, frame_height, frame_stride, frame_uv_offset, projection);
 
   for (int i = 0; i < temporal_skip; i++) {
     CL_CHECK(clEnqueueCopyBuffer(q, img_buffer_20hz_cl, img_buffer_20hz_cl, (i+1)*frame_size_bytes, i*frame_size_bytes, frame_size_bytes, 0, nullptr, nullptr));
   }
-  loadyuv_queue(&loadyuv, q, y_cl, u_cl, v_cl, last_img_cl, brightness_multiplier);
+  loadyuv_queue(&loadyuv, q, y_cl, u_cl, v_cl, last_img_cl);
 
   copy_queue(&loadyuv, q, img_buffer_20hz_cl, input_frames_cl, 0, 0, frame_size_bytes);
   copy_queue(&loadyuv, q, last_img_cl, input_frames_cl, 0, frame_size_bytes, frame_size_bytes);

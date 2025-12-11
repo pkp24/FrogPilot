@@ -66,7 +66,7 @@ class DrivingModelFrame : public ModelFrame {
 public:
   DrivingModelFrame(cl_device_id device_id, cl_context context, int _temporal_skip);
   ~DrivingModelFrame();
-  cl_mem* prepare(cl_mem yuv_cl, int frame_width, int frame_height, int frame_stride, int frame_uv_offset, const mat3& projection, float brightness_multiplier = 1.0f);
+  cl_mem* prepare(cl_mem yuv_cl, int frame_width, int frame_height, int frame_stride, int frame_uv_offset, const mat3& projection);
 
   const int MODEL_WIDTH = 512;
   const int MODEL_HEIGHT = 256;
@@ -85,7 +85,7 @@ class MonitoringModelFrame : public ModelFrame {
 public:
   MonitoringModelFrame(cl_device_id device_id, cl_context context);
   ~MonitoringModelFrame();
-  cl_mem* prepare(cl_mem yuv_cl, int frame_width, int frame_height, int frame_stride, int frame_uv_offset, const mat3& projection, float brightness_multiplier = 1.0f);
+  cl_mem* prepare(cl_mem yuv_cl, int frame_width, int frame_height, int frame_stride, int frame_uv_offset, const mat3& projection);
 
   const int MODEL_WIDTH = 1440;
   const int MODEL_HEIGHT = 960;

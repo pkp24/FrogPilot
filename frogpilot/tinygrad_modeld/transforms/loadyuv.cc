@@ -33,13 +33,12 @@ void loadyuv_destroy(LoadYUVState* s) {
 
 void loadyuv_queue(LoadYUVState* s, cl_command_queue q,
                    cl_mem y_cl, cl_mem u_cl, cl_mem v_cl,
-                   cl_mem out_cl, float brightness_multiplier) {
+                   cl_mem out_cl) {
   cl_int global_out_off = 0;
 
   CL_CHECK(clSetKernelArg(s->loadys_krnl, 0, sizeof(cl_mem), &y_cl));
   CL_CHECK(clSetKernelArg(s->loadys_krnl, 1, sizeof(cl_mem), &out_cl));
   CL_CHECK(clSetKernelArg(s->loadys_krnl, 2, sizeof(cl_int), &global_out_off));
-  CL_CHECK(clSetKernelArg(s->loadys_krnl, 3, sizeof(float), &brightness_multiplier));
 
   const size_t loadys_work_size = (s->width*s->height)/8;
   CL_CHECK(clEnqueueNDRangeKernel(q, s->loadys_krnl, 1, NULL,

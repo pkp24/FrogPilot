@@ -147,8 +147,7 @@ class ModelState:
   output: np.ndarray
   prev_desire: np.ndarray  # for tracking the rising edge of the pulse
 
-  def __init__(self, context: CLContext, model: str, brightness_multiplier: float = 1.0):
-    self.brightness_multiplier = brightness_multiplier
+  def __init__(self, context: CLContext, model: str):
     with open(MODELS_PATH / f'{model}_driving_vision_metadata.pkl', 'rb') as f:
       vision_metadata = pickle.load(f)
       self.vision_input_shapes =  vision_metadata['input_shapes']
@@ -204,7 +203,7 @@ class ModelState:
 
     if self.use_lateral_control_params:
       self.numpy_inputs['lateral_control_params'][:] = inputs['lateral_control_params']
-    imgs_cl = {name: self.frames[name].prepare(bufs[name], transforms[name].flatten(), self.brightness_multiplier) for name in self.vision_input_names}
+    imgs_cl = {name: self.frames[name].prepare(bufs[name], transforms[name].flatten()) for name in self.vision_input_names}
 
     if TICI and not USBGPU:
       # The imgs tensors are backed by opencl memory, only need init once
@@ -262,8 +261,7 @@ def main(demo=False):
   cloudlog.warning("setting up CL context")
   cl_context = CLContext()
   cloudlog.warning("CL context ready; loading model")
-  brightness_multiplier = frogpilot_toggles.model_brightness_multiplier
-  model = ModelState(cl_context, model_name, brightness_multiplier)
+  model = ModelState(cl_context, model_name)
   cloudlog.warning(f"models loaded in {time.monotonic() - st:.1f}s, tinygrad_modeld starting")
 
   # visionipc clients
