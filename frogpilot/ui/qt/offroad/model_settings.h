@@ -21,14 +21,13 @@ private:
   void updateState(const UIState &s, const FrogPilotUIState &fs);
   void updateToggles();
 
-  bool allModelsDownloaded;
-  bool allModelsDownloading;
-  bool cancellingDownload;
-  bool finalizingDownload;
-  bool forceOpenDescriptions;
-  bool modelDownloading;
-  bool noModelsDownloaded;
-  bool started;
+  bool allModelsDownloaded = false;
+  bool allModelsDownloading = false;
+  bool cancellingDownload = false;
+  bool finalizingDownload = false;
+  bool forceOpenDescriptions = false;
+  bool modelDownloading = false;
+  bool noModelsDownloaded = false;
 
   std::map<QString, AbstractControl*> toggles;
 

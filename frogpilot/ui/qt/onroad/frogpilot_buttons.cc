@@ -1,5 +1,12 @@
 #include "frogpilot/ui/qt/onroad/frogpilot_buttons.h"
 
+#include <cmath>
+
+#include <QDateTime>
+
+#include "frogpilot/ui/qt/onroad/screen_recorder.h"
+#include "selfdrive/ui/qt/util.h"
+
 DistanceButton::DistanceButton(QWidget *parent) : QPushButton(parent) {
   setFixedSize(btn_size + UI_BORDER_SIZE, btn_size);
 
@@ -60,4 +67,64 @@ void DistanceButton::paintEvent(QPaintEvent *event) {
   QMovie *gif = icon.second.data();
 
   drawIcon(p, rect().center() + QPoint(UI_BORDER_SIZE / 2, 0), gif ? gif->currentPixmap() : img, Qt::transparent, 1.0);
+}
+
+ScreenRecorderButton::ScreenRecorderButton(QWidget *parent) : QPushButton(parent) {
+  setFixedSize(btn_size, btn_size);
+
+  QObject::connect(this, &QPushButton::clicked, [this] {
+    if (ScreenRecorder::active()) {
+      ScreenRecorder::stop();
+    } else {
+      ScreenRecorder::start();
+    }
+    update();
+  });
+  QObject::connect(uiState(), &UIState::offroadTransition, this, [](bool offroad) {
+    if (offroad) {
+      ScreenRecorder::stop();
+    }
+  });
+  QObject::connect(uiState(), &UIState::uiUpdate, this, [this] {
+    if (ScreenRecorder::active()) {
+      update();
+    }
+  });
+}
+
+void ScreenRecorderButton::paintEvent(QPaintEvent *event) {
+  bool recording = ScreenRecorder::active();
+
+  QPainter p(this);
+  p.setRenderHints(QPainter::Antialiasing | QPainter::TextAntialiasing);
+
+  if (recording) {
+    qreal phase = (QDateTime::currentMSecsSinceEpoch() % 2000) / 2000.0 * 2 * M_PI;
+    qreal alphaFactor = 0.5 + 0.5 * sin(phase);
+
+    QColor glowColor(201, 34, 49);
+    glowColor.setAlphaF(0.3 + 0.7 * alphaFactor);
+
+    p.setBrush(QColor(201, 34, 49));
+    p.setFont(InterFont(25, QFont::Bold));
+    p.setPen(QPen(glowColor, 8 + static_cast<int>(2 * alphaFactor)));
+  } else {
+    p.setBrush(QColor(0, 0, 0, 166));
+    p.setFont(InterFont(25, QFont::DemiBold));
+    p.setPen(QPen(QColor(201, 34, 49), 8));
+  }
+
+  const int centeringOffset = 10;
+  QRect buttonRect(centeringOffset, btn_size / 3, btn_size - centeringOffset * 2, btn_size / 3);
+  p.drawRoundedRect(buttonRect, 24, 24);
+
+  QRect textRect = buttonRect.adjusted(centeringOffset, 0, -centeringOffset, 0);
+  p.setPen(QPen(Qt::white, 6));
+  p.drawText(textRect, Qt::AlignLeft | Qt::AlignVCenter, recording ? tr("RECORDING") : tr("RECORD"));
+
+  if (!recording) {
+    p.setBrush(QColor(201, 34, 49, 166));
+    p.setPen(Qt::NoPen);
+    p.drawEllipse(QPoint(buttonRect.right() - btn_size / 10 - centeringOffset, buttonRect.center().y()), btn_size / 10, btn_size / 10);
+  }
 }

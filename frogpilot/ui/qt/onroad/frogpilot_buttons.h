@@ -17,11 +17,21 @@ private:
   void showEvent(QShowEvent *event) override;
   void updateTheme();
 
-  bool traffic_mode_active;
+  bool traffic_mode_active = false;
 
-  int personality;
+  int personality = 0;
 
   Params params_memory{"/dev/shm/params"};
 
   QMap<int, QPair<QPixmap, QSharedPointer<QMovie>>> icon_map;
+};
+
+class ScreenRecorderButton : public QPushButton {
+  Q_OBJECT
+
+public:
+  explicit ScreenRecorderButton(QWidget *parent = 0);
+
+private:
+  void paintEvent(QPaintEvent *event) override;
 };
