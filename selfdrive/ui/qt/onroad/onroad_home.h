@@ -3,7 +3,7 @@
 #include "selfdrive/ui/qt/onroad/alerts.h"
 #include "selfdrive/ui/qt/onroad/annotated_camera.h"
 
-#include "frogpilot/ui/qt/onroad/frogpilot_onroad.h"
+#include "frogpilot/selfdrive/ui/qt/onroad/frogpilot_onroad.h"
 
 class OnroadWindow : public QWidget {
   Q_OBJECT

@@ -1,154 +1,177 @@
-import { html, reactive } from "/assets/vendor/arrow.mjs"
-import { createBrowserHistory, createRouter } from "/assets/vendor/remix-router.js"
-import { hideSidebar } from "/assets/js/utils.js"
-import { DoorControl } from "/assets/components/tools/doors.js"
-import { ErrorLogs } from "/assets/components/tools/error_logs.js"
-import { Home } from "/assets/components/home/home.js"
-import { NavDestination } from "/assets/components/navigation/navigation_destination.js"
-import { NavKeys } from "/assets/components/navigation/navigation_keys.js"
-import { RouteRecordings } from "/assets/components/recordings/dashcam_routes.js"
-import { ScreenRecordings } from "/assets/components/recordings/screen_recordings.js"
-import { Sidebar } from "/assets/components/sidebar.js"
-import { SpeedLimits } from "/assets/components/tools/speed_limits.js"
-import { TailscaleControl } from "/assets/components/tailscale/tailscale.js"
-import { ThemeMaker } from "/assets/components/tools/theme_maker.js"
-import { TmuxLog } from "/assets/components/tools/tmux.js"
-import { ToggleControl } from "/assets/components/tools/toggles.js"
-import { TSKManager } from "/assets/components/tools/tsk_manager.js"
+import { fetchJson } from "/assets/js/api.js";
+import { mountSidebar, selectPage, updateAvailability } from "/assets/components/sidebar.js";
 
-let router, routerState
+const pages = {
+  "/": "home/home",
+  "/dashcam_routes": "recordings/dashcam_routes",
+  "/download_speed_limits": "tools/speed_limits",
+  "/lock_or_unlock_doors": "tools/doors",
+  "/manage_error_logs": "tools/error_logs",
+  "/manage_navigation_keys": "navigation/navigation_keys",
+  "/manage_tailscale": "tailscale/tailscale",
+  "/manage_tmux": "tools/tmux",
+  "/manage_toggles": "tools/toggles",
+  "/screen_recordings": "recordings/screen_recordings",
+  "/set_navigation_destination": "navigation/navigation_destination",
+  "/theme_maker": "tools/theme_maker",
+  "/tsk_manager": "tools/tsk_manager",
+};
 
-function _teardownStore() {
-  if (!_teardownStore.list) _teardownStore.list = []
-  return _teardownStore.list
-}
-export function onRouteLeave(fn) {
-  _teardownStore().push(fn)
-}
-function _runTeardowns() {
-  const list = _teardownStore()
-  while (list.length) {
-    try { list.pop()() } catch (e) { console.error("teardown error:", e) }
+const content = document.getElementById("page");
+const overlay = document.getElementById("driving_lock");
+
+const state = {
+  availabilityController: undefined,
+  cleanup: undefined,
+  locked: true,
+  pageVersion: 0,
+  stylesheets: new Map(),
+};
+
+mountSidebar(document.getElementById("navigation"));
+
+function leavePage() {
+  state.pageVersion++;
+  if (state.cleanup) {
+    const closePage = state.cleanup;
+    state.cleanup = null;
+    closePage();
   }
-}
 
-function createRoute(id, path, component) {
-  return {
-    id,
-    path,
-    loader: () => {},
-    element: component,
+  for (const dialog of document.querySelectorAll("dialog[open]")) {
+    dialog.close();
   }
+
+  content.replaceChildren();
+  content.removeAttribute("aria-busy");
 }
 
-function Root() {
-  let routes = [
-    createRoute("doors", "/lock_or_unlock_doors", DoorControl),
-    createRoute("errorLogs", "/manage_error_logs", ErrorLogs),
-    createRoute("navdestination", "/set_navigation_destination", NavDestination),
-    createRoute("navkeys", "/manage_navigation_keys", NavKeys),
-    createRoute("root", "/", Home),
-    createRoute("routes", "/dashcam_routes", RouteRecordings),
-    createRoute("screen_recordings", "/screen_recordings", ScreenRecordings),
-    createRoute("speed_limits", "/download_speed_limits", SpeedLimits),
-    createRoute("tailscale", "/manage_tailscale", TailscaleControl),
-    createRoute("thememaker", "/theme_maker", ThemeMaker),
-    createRoute("tmux", "/manage_tmux", TmuxLog),
-    createRoute("toggles", "/manage_toggles", ToggleControl),
-    createRoute("tsk_manager", "/tsk_manager", TSKManager),
-  ]
+async function showPage() {
+  leavePage();
+  selectPage(location.pathname);
+  if (state.locked) {
+    return;
+  }
 
-  router = createRouter({
-    routes,
-    history: createBrowserHistory(),
-  }).initialize()
+  const page = pages[location.pathname];
+  if (!page) {
+    content.textContent = "Page not found.";
+    return;
+  }
 
-  routerState = reactive({
-    activePath: "/",
-    activePathFull: "/",
-    initialized: false,
-    navigation: { state: "loading" },
-    errors: [],
-    params: {},
-  })
+  content.setAttribute("aria-busy", "true");
+  const version = state.pageVersion;
 
-  let prevPath = null
-  router.subscribe(({ initialized, navigation, matches, errors }) => {
-    const [match] = matches
-    if (prevPath !== null && prevPath !== match.route.path) {
-      _runTeardowns()
+  try {
+    if (!state.stylesheets.has(page)) {
+      state.stylesheets.set(page, new Promise((resolve, reject) => {
+        const link = document.createElement("link");
+        link.rel = "stylesheet";
+        link.href = `/assets/components/${page}.css`;
+        link.onload = resolve;
+        link.onerror = () => {
+          state.stylesheets.delete(page);
+          link.remove();
+          reject(new Error("Could not load page styles."));
+        };
+        document.head.append(link);
+      }));
     }
-    prevPath = match.route.path
-    Object.assign(routerState, {
-      initialized,
-      activePath: match.route.path,
-      activePathFull: match.pathname,
-      navigation,
-      params: match.params,
-      errors,
-    })
-  })
 
-  const onroadState = reactive({ onroad: false })
-  async function pollOnroad() {
-    try {
-      onroadState.onroad = (await (await fetch("/api/onroad")).json()).onroad
-    } catch {
+    const [module] = await Promise.all([import(`/assets/components/${page}.js`), state.stylesheets.get(page)]);
+    if (version !== state.pageVersion || state.locked) {
+      return;
+    }
+
+    state.cleanup = module.mount(content);
+  } catch (error) {
+    if (version === state.pageVersion && !state.locked) {
+      content.textContent = `Could not open this page: ${error.message}`;
+    }
+  } finally {
+    if (version === state.pageVersion) {
+      content.removeAttribute("aria-busy");
     }
   }
-  pollOnroad()
-  setInterval(pollOnroad, 1000)
-
-  return html`
-    ${() => Sidebar(routerState.activePathFull)}
-    <div class="content">
-      ${() => {
-        if (!routerState.initialized || routerState.navigation.state === "loading") {
-          return html`<div>Loading...</div>`
-        }
-
-        if (routerState.errors && Object.values(routerState.errors).some(e => e?.status === 404)) {
-          return html`<h1>Not Found</h1>`
-        }
-
-        const match = routes.find(r => r.path === routerState.activePath)
-        if (!match) {
-          return html`<h1>Not Found</h1>`
-        }
-        return match.element({ params: routerState.params })
-      }}
-    </div>
-    ${() => {
-      if (!onroadState.onroad) return ""
-      return html`
-      <div class="onroad-overlay" role="dialog" aria-modal="true" aria-labelledby="onroad-title">
-        <div class="onroad-message">
-          <i class="bi bi-car-front-fill onroad-icon" aria-hidden="true"></i>
-          <h1 id="onroad-title">The Pond is locked while driving</h1>
-          <p>Shift into Park to use The Pond.</p>
-        </div>
-      </div>`
-    }}
-  `
 }
 
-export function Link(href, children, onClick, classes = "", ariaCurrent = null) {
-  return html`<a
-    class="${classes}"
-    href="${() => href}"
-    aria-current="${() => ariaCurrent || false}"
-    @click="${(e) => {
-      e.preventDefault()
-      router.navigate(e.currentTarget.href)
-      hideSidebar()
-      onClick?.()
-    }}"
-  >${children}</a>`
+function setLocked(value, reachable) {
+  const changed = state.locked !== value;
+  state.locked = value;
+  overlay.hidden = !value;
+  document.getElementById("app").inert = value;
+  document.getElementById("menu_button").inert = value;
+
+  const title = document.getElementById("lock_title");
+  const message = document.getElementById("lock_message");
+  if (reachable) {
+    title.textContent = "The Pond is locked while driving";
+    message.textContent = "Shift into Park to use The Pond.";
+  } else {
+    title.textContent = "Can't reach your device";
+    message.textContent = "The Pond will reconnect automatically when your device is available.";
+  }
+
+  if (!changed) {
+    return;
+  }
+
+  if (value) {
+    state.availabilityController?.abort();
+    selectPage(location.pathname);
+    leavePage();
+    overlay.focus();
+  } else {
+    state.availabilityController = new AbortController();
+    updateAvailability(state.availabilityController.signal).catch(error => {
+      if (error.name !== "AbortError") {
+        console.error("Could not check vehicle features", error);
+      }
+    });
+    showPage();
+  }
 }
 
-export function Navigate(href) {
-  router.navigate(href)
-  window.scrollTo(0, 0)
+async function checkDriving() {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 1500);
+
+  try {
+    const data = await fetchJson("/api/onroad", { signal: controller.signal });
+    if (typeof data.onroad !== "boolean") {
+      throw new Error("Invalid device state");
+    }
+
+    setLocked(data.onroad, true);
+  } catch {
+    setLocked(true, false);
+  } finally {
+    clearTimeout(timeout);
+    setTimeout(checkDriving, 1000);
+  }
 }
 
-Root()(document.getElementById("app"))
+window.addEventListener("popstate", showPage);
+
+document.addEventListener("click", event => {
+  const link = event.target.closest("a[href]");
+  if (!link || event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey || link.target || link.hasAttribute("download")) {
+    return;
+  }
+
+  const url = new URL(link.href);
+  if (url.origin !== location.origin || !pages[url.pathname]) {
+    return;
+  }
+
+  event.preventDefault();
+  if (state.locked) {
+    return;
+  }
+
+  history.pushState(null, "", url);
+  window.scrollTo(0, 0);
+  showPage();
+});
+
+document.fonts.ready.then(checkDriving);

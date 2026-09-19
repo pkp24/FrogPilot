@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 import os
+import errno
 import shutil
 import threading
 from openpilot.system.hardware.hw import Paths
 from openpilot.common.swaglog import cloudlog
 from openpilot.system.loggerd.config import get_available_bytes, get_available_percent
 from openpilot.system.loggerd.uploader import listdir_by_creation
-from openpilot.system.loggerd.xattr_cache import getxattr
 
 MIN_BYTES = 5 * 1024 * 1024 * 1024
 MIN_PERCENT = 10
@@ -16,10 +16,31 @@ DELETE_LAST = ['boot', 'crash']
 PRESERVE_ATTR_NAME = 'user.preserve'
 PRESERVE_ATTR_VALUE = b'1'
 PRESERVE_COUNT = 5
+PRESERVE_ROUTE_ATTR_NAME = 'user.preserve_route'
 
 
 def has_preserve_xattr(d: str) -> bool:
-  return getxattr(os.path.join(Paths.log_root(), d), PRESERVE_ATTR_NAME) == PRESERVE_ATTR_VALUE
+  return has_preserve_attr(os.path.join(Paths.log_root(), d), PRESERVE_ATTR_NAME)
+
+
+def has_preserve_attr(path, attribute):
+  try:
+    return os.getxattr(path, attribute) == PRESERVE_ATTR_VALUE
+  except OSError as error:
+    if error.errno in (errno.ENODATA, errno.ENOENT):
+      return False
+    raise
+
+
+def get_preserved_route_segments(dirs_by_creation):
+  routes = set()
+  for directory in reversed(dirs_by_creation):
+    route, separator, segment = directory.rpartition("--")
+    if separator and segment.isdigit() and has_preserve_attr(os.path.join(Paths.log_root(), directory), PRESERVE_ROUTE_ATTR_NAME):
+      routes.add(route)
+      if len(routes) == PRESERVE_COUNT:
+        break
+  return [directory for directory in dirs_by_creation if directory.rpartition("--")[0] in routes]
 
 
 def get_preserved_segments(dirs_by_creation: list[str]) -> list[str]:
@@ -53,7 +74,7 @@ def deleter_thread(exit_event):
       dirs = listdir_by_creation(Paths.log_root())
 
       # skip deleting most recent N preserved segments (and their prior segment)
-      preserved_dirs = get_preserved_segments(dirs)
+      preserved_dirs = set(get_preserved_segments(dirs)) | set(get_preserved_route_segments(dirs))
 
       # remove the earliest directory we can
       for delete_dir in sorted(dirs, key=lambda d: (d in DELETE_LAST, d in preserved_dirs)):

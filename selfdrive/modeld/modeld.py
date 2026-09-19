@@ -24,7 +24,8 @@ from openpilot.selfdrive.modeld.fill_model_msg import fill_model_msg, fill_pose_
 from openpilot.selfdrive.modeld.constants import ModelConstants
 from openpilot.selfdrive.modeld.models.commonmodel_pyx import ModelFrame, CLContext
 
-from openpilot.frogpilot.common.frogpilot_variables import METADATAS_PATH, MODELS_PATH, get_frogpilot_toggles
+from openpilot.frogpilot.selfdrive.modeld.model_helpers import METADATAS_PATH, MODELS_PATH
+from openpilot.frogpilot.common.frogpilot_variables import get_frogpilot_toggles
 
 PROCESS_NAME = "selfdrive.modeld.modeld"
 SEND_RAW_PRED = os.getenv('SEND_RAW_PRED')
@@ -302,6 +303,7 @@ def main(demo=False):
       DH.update(sm['carState'], sm['carControl'].latActive, lane_change_prob, sm['frogpilotPlan'], frogpilot_toggles)
       modelv2_send.modelV2.meta.laneChangeState = DH.lane_change_state
       modelv2_send.modelV2.meta.laneChangeDirection = DH.lane_change_direction
+      frogpilot_modelv2_send.valid = modelv2_send.valid
       frogpilot_modelv2_send.frogpilotModelV2.turnDirection = DH.turn_direction
       drivingdata_send.drivingModelData.meta.laneChangeState = DH.lane_change_state
       drivingdata_send.drivingModelData.meta.laneChangeDirection = DH.lane_change_direction

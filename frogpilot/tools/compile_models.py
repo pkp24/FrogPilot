@@ -7,12 +7,12 @@ from pathlib import Path
 
 from openpilot.common.basedir import BASEDIR
 
-from openpilot.frogpilot.assets.download_functions import download_file, verify_download
-from openpilot.frogpilot.assets.model_manager import CANCEL_DOWNLOAD_PARAM, DOWNLOAD_PROGRESS_PARAM, MODEL_DOWNLOAD_PARAM
+from openpilot.frogpilot.common.download_functions import download_file, verify_download
+from openpilot.frogpilot.selfdrive.modeld.model_manager import CANCEL_DOWNLOAD_PARAM, DOWNLOAD_PROGRESS_PARAM, MODEL_DOWNLOAD_PARAM
 from openpilot.frogpilot.common.frogpilot_utilities import delete_file, run_cmd
-from openpilot.frogpilot.common.frogpilot_variables import MODELS_PATH
+from openpilot.frogpilot.selfdrive.modeld.model_helpers import MODELS_PATH
 
-METADATA_SCRIPT = Path(BASEDIR) / "frogpilot/tinygrad_modeld/get_model_metadata.py"
+METADATA_SCRIPT = Path(BASEDIR) / "frogpilot/selfdrive/modeld/tinygrad/get_model_metadata.py"
 TINYGRAD_REPO_PATH = Path(BASEDIR) / "tinygrad_repo"
 
 MODELS_SOURCE = "https://api.github.com/repos/FrogAi/FrogPilot-Resources/contents/uncompiled?ref=Models"

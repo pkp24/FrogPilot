@@ -1,295 +1,257 @@
-import { html, reactive } from "/assets/vendor/arrow.mjs"
-import { formatSecondsToHuman } from "/assets/js/utils.js"
-import { Modal } from "/assets/components/modal.js";
-import { onRouteLeave } from "/assets/components/router.js"
+import { html, reactive } from "/assets/vendor/arrow.mjs";
+import { fetchJson } from "/assets/js/api.js";
+import { showSnackbar } from "/assets/js/snackbar.js";
+import { formatSecondsToHuman } from "/assets/js/utils.js";
+import { confirmDialog, openDialog } from "/assets/components/modal.js";
 
-const logSelectorState = reactive({
-  loading: false,
-  files: [],
-  logsLoadedOnce: false,
-  showDeleteAllModal: false,
-  logToDelete: null,
-  logToRename: null,
-  newName: ""
-});
+export function mount(container) {
+  const controller = new AbortController();
+  const state = reactive({ busy: false, error: "", output: null, paused: false });
+  let selector = null;
+  let stream = null;
 
-async function loadTmuxLogs() {
-  if (logSelectorState.loading || logSelectorState.logsLoadedOnce) return;
-
-  logSelectorState.loading = true;
-  try {
-    const res = await fetch("/api/tmux_log/list");
-    if (!res.ok) throw new Error(await res.text());
-
-    const data = await res.json();
-    logSelectorState.files = data.map(f => {
-      const date = new Date(f.timestamp * 1000);
-      return {
-        filename: f.filename,
-        date: date.toLocaleString(),
-        timeSince: (Date.now() - date.getTime()) / 1000,
-      };
-    });
-  } catch (err) {
-    showSnackbar(`Failed to fetch logs: ${err.message}`, "error");
-    logSelectorState.files = [];
-  } finally {
-    logSelectorState.loading = false;
-    logSelectorState.logsLoadedOnce = true;
+  function closeStream() {
+    stream?.close();
+    stream = null;
   }
-}
 
-function TmuxLogSelector({ action, closeFn }) {
-  loadTmuxLogs();
-
-  async function handleFileClick(file) {
-    if (action === "download") {
-      const link = document.createElement("a");
-      link.href = `/api/tmux_log/download/${encodeURIComponent(file.filename)}`;
-      link.download = file.filename;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-
-    } else if (action === "rename") {
-      logSelectorState.logToRename = file;
-      logSelectorState.newName = file.filename;
-
-    } else if (action === "delete") {
-      logSelectorState.logToDelete = file;
+  function connectStream() {
+    closeStream();
+    if (controller.signal.aborted || state.paused || document.hidden) {
+      return;
     }
+
+    state.error = "";
+    stream = new EventSource("/api/tmux_log/live");
+    stream.onmessage = event => {
+      state.error = "";
+      state.output = event.data;
+    };
+    stream.onerror = () => {
+      state.error = "Live tmux output is unavailable. Reconnecting...";
+    };
   }
 
-  async function confirmDeleteFile() {
-    const file = logSelectorState.logToDelete;
-    if (!file) return;
+  async function capture() {
+    if (state.busy) {
+      return;
+    }
+
+    state.busy = true;
 
     try {
-      const res = await fetch(`/api/tmux_log/delete/${encodeURIComponent(file.filename)}`, {
-        method: "DELETE"
-      });
-      if (!res.ok) throw new Error(await res.text());
-
-      showSnackbar(`${file.filename} deleted successfully!`, "success");
-      logSelectorState.files = logSelectorState.files.filter(f => f.filename !== file.filename);
-      if (logSelectorState.files.length === 0) {
-        logSelectorState.logsLoadedOnce = false;
+      const result = await fetchJson("/api/tmux_log/capture", { method: "POST" });
+      if (!controller.signal.aborted) {
+        showSnackbar(result.message);
       }
-    } catch (err) {
-      showSnackbar(`Delete failed: ${err.message}`, "error");
+    } catch (error) {
+      if (!controller.signal.aborted) {
+        showSnackbar(error.message, "error");
+      }
     } finally {
-      logSelectorState.logToDelete = null;
+      state.busy = false;
     }
   }
 
-  async function confirmRenameFile() {
-    const file = logSelectorState.logToRename;
-    const base = logSelectorState.newName.trim();
-    if (!file || !base) {
-      logSelectorState.logToRename = null;
-      logSelectorState.newName = "";
+  async function deleteAll() {
+    if (state.busy) {
       return;
     }
-    const newName = base.endsWith(".json") ? base : base + ".json";
 
-    if (newName === file.filename) {
-      logSelectorState.logToRename = null;
-      logSelectorState.newName = "";
-      return;
-    }
+    state.busy = true;
 
     try {
-      const res = await fetch(`/api/tmux_log/rename/${encodeURIComponent(file.filename)}/${encodeURIComponent(newName)}`, {
-        method: "PUT"
+      const confirmed = await confirmDialog("Delete captured logs", "Delete all saved tmux logs? This cannot be undone.", {
+        confirmText: "Delete all", danger: true,
       });
-      if (!res.ok) throw new Error(await res.text());
+      if (!confirmed || controller.signal.aborted) {
+        return;
+      }
 
-      showSnackbar(`${file.filename} renamed to ${newName}!`, "success");
-      logSelectorState.files = logSelectorState.files.map(f =>
-        f.filename === file.filename ? { ...f, filename: newName } : f
-      );
-    } catch (err) {
-      showSnackbar(`Rename failed: ${err.message}`, "error");
+      const result = await fetchJson("/api/tmux_log/delete_all", { method: "DELETE" });
+      if (!controller.signal.aborted) {
+        showSnackbar(result.message);
+      }
+    } catch (error) {
+      if (!controller.signal.aborted) {
+        showSnackbar(error.message, "error");
+      }
     } finally {
-      logSelectorState.logToRename = null;
-      logSelectorState.newName = "";
+      state.busy = false;
     }
   }
 
-  requestAnimationFrame(() => {
-    const w = document.querySelector(".tmux-log-selector-wrapper");
-    if (w && !w.contains(document.activeElement)) w.focus();
-  });
+  function chooseLog(action) {
+    if (selector) {
+      return;
+    }
 
-  return html`
-    <div class="tmux-log-selector-wrapper" role="dialog" aria-modal="true" aria-label="Select a tmux log" tabindex="-1" @click="${(e) => e.target === e.currentTarget && closeFn()}" @keydown="${(e) => { if (e.key === 'Escape' && !logSelectorState.logToDelete && !logSelectorState.logToRename) { e.preventDefault(); closeFn(); } }}">
-      <div id="fileList">
-        <div class="fileEntry header">
-          <p>Filename</p>
-          <p>Date</p>
-          <p>Age</p>
-        </div>
+    const requestController = new AbortController();
+    const files = reactive({ error: "", items: [], loading: true });
 
-        ${() => {
-          if (logSelectorState.loading && !logSelectorState.logsLoadedOnce) {
-            return html`<div class="fileEntry"><p>Loading...</p></div>`;
+    async function loadFiles() {
+      if (requestController.signal.aborted) {
+        return;
+      }
+
+      files.loading = true;
+      files.error = "";
+
+      try {
+        files.items = await fetchJson("/api/tmux_log/list", { signal: requestController.signal });
+      } catch (error) {
+        if (!requestController.signal.aborted) {
+          files.error = error.message;
+        }
+      } finally {
+        files.loading = false;
+      }
+    }
+
+    async function useFile(file) {
+      if (state.busy) {
+        return;
+      }
+
+      if (action === "download") {
+        const link = document.createElement("a");
+        link.href = `/api/tmux_log/download/${encodeURIComponent(file.filename)}`;
+        link.download = file.filename;
+
+        document.body.append(link);
+        link.click();
+        link.remove();
+        return;
+      }
+
+      state.busy = true;
+
+      try {
+        if (action === "rename") {
+          let name = await confirmDialog("Rename captured log", "Choose a filename for this log.", {
+            confirmText: "Rename", inputValue: file.filename.replace(/\.json$/, ""),
+          });
+          if (typeof name !== "string" || !name.trim() || controller.signal.aborted) {
+            return;
           }
-          if (logSelectorState.files.length === 0) {
-            return html`<div class="fileEntry"><p>No tmux logs found!</p></div>`;
+
+          name = name.trim();
+          if (!name.endsWith(".json")) {
+            name += ".json";
           }
-          return logSelectorState.files.map(file => html`
-            <div class="fileEntry" role="button" tabindex="0"
-              @click="${() => handleFileClick(file)}"
-              @keydown="${(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); handleFileClick(file); } }}">
-              <p><span class="label">Filename:</span> <span class="value">${() => file.filename}</span></p>
-              <p><span class="label">Date:</span> <span class="value">${() => file.date}</span></p>
-              <p><span class="label">Age:</span> <span class="value">${() => file.timeSince < 60 ? "just now" : `${formatSecondsToHuman(file.timeSince, "minutes")} ago`}</span></p>
-            </div>
-          `);
-        }}
 
-        <button @click="${closeFn}" class="cancel-button">Close</button>
+          if (name === file.filename) {
+            return;
+          }
 
-        ${() => logSelectorState.logToDelete ? Modal({
-          title: "Confirm Delete",
-          message: html`Are you sure you want to delete <strong>${() => logSelectorState.logToDelete.filename}</strong>?`,
-          onConfirm: confirmDeleteFile,
-          onCancel: () => { logSelectorState.logToDelete = null },
-          confirmText: "Yes, Delete"
-        }) : ""}
+          await fetchJson(`/api/tmux_log/rename/${encodeURIComponent(file.filename)}/${encodeURIComponent(name)}`, { method: "PUT" });
+          await loadFiles();
+        } else {
+          const confirmed = await confirmDialog("Delete captured log", `Delete “${file.filename}”?`, { confirmText: "Delete", danger: true });
+          if (!confirmed || controller.signal.aborted) {
+            return;
+          }
 
-        ${() => logSelectorState.logToRename ? Modal({
-          title: "Rename Log",
-          message: html`
-            <div>
-              <p>Rename <strong>${() => logSelectorState.logToRename.filename}</strong> to:</p>
-              <div style="margin-top: 10px;">
-                <input
-                  class="modal-input"
-                  aria-label="New log filename"
-                  type="text"
-                  .value="${() => logSelectorState.newName}"
-                  @click="${e => e.stopPropagation()}"
-                  @input="${(e) => logSelectorState.newName = e.target.value}"
-                />
-              </div>
-            </div>
-          `,
-          onConfirm: confirmRenameFile,
-          onCancel: () => {
-            logSelectorState.logToRename = null;
-            logSelectorState.newName = "";
-          },
-          confirmText: "Rename",
-          confirmClass: "btn-primary"
-        }) : ""}
+          await fetchJson(`/api/tmux_log/delete/${encodeURIComponent(file.filename)}`, { method: "DELETE" });
+          files.items = files.items.filter(item => item.filename !== file.filename);
+        }
+
+        if (!controller.signal.aborted) {
+          showSnackbar("Captured log updated!");
+        }
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          showSnackbar(error.message, "error");
+        }
+      } finally {
+        state.busy = false;
+      }
+    }
+
+    const dialog = openDialog(`${action[0].toUpperCase() + action.slice(1)} captured log`, html`
+      <div id="fileList" aria-label="Captured logs" aria-busy="${() => files.loading}">
+        <div class="fileEntry header"><span>Filename</span><span>Date</span><span>Age</span></div>
+        <p role="status">${() => {
+          if (files.loading) {
+            return "...";
+          }
+
+          if (files.error) {
+            return files.error;
+          }
+
+          if (!files.items.length) {
+            return "No tmux logs found.";
+          }
+
+          return "";
+        }}</p>
+        <button type="button" hidden="${() => !files.error}" @click="${loadFiles}">Try again</button>
+        ${() => files.items.map(file => {
+          const date = new Date(file.timestamp * 1000);
+          const seconds = Math.max(0, (Date.now() - date.getTime()) / 1000);
+          let age = "Just now";
+          if (seconds >= 60) {
+            age = `${formatSecondsToHuman(seconds)} ago`;
+          }
+
+          return html`
+            <button type="button" class="fileEntry" disabled="${() => state.busy}" @click="${() => useFile(file)}">
+              <span>${() => file.filename}</span><span>${() => date.toLocaleString()}</span><span>${() => age}</span>
+            </button>
+          `;
+        })}
       </div>
-    </div>
-  `
-}
+    `);
+    dialog.classList.add("tmux-log-dialog");
+    selector = dialog;
 
-export function TmuxLog() {
-  const state = reactive({
-    paused: false,
-    latest: "",
-    log: "",
-    selectorAction: null,
-  });
+    dialog.addEventListener("close", () => {
+      requestController.abort();
+      selector = null;
+    }, { once: true });
 
-  const event_source = new EventSource("/api/tmux_log/live");
-
-  event_source.onmessage = e => {
-    state.latest = e.data;
-    if (!state.paused) {
-      state.log = state.latest;
-    }
+    loadFiles();
   }
 
-  event_source.onerror = err => {
-    console.error("tmux log stream error (will auto-reconnect):", err);
-  }
-
-  onRouteLeave(() => event_source.close())
-
-  function togglePause () {
-    state.paused = !state.paused;
-    if (!state.paused) {
-      state.log = state.latest;
-    }
-  }
-
-  function captureLog() {
-    fetch("/api/tmux_log/capture", { method: "POST" })
-      .then(res => {
-        if (!res.ok) return res.text().then(msg => { throw new Error(msg); });
-        showSnackbar("Current session captured!", "success");
-        logSelectorState.files = [];
-        logSelectorState.logsLoadedOnce = false;
-      })
-      .catch(err => {
-        showSnackbar(`Capture failed: ${err.message}`, "error");
-      });
-  }
-
-  function downloadSessions() {
-    state.selectorAction = "download";
-  }
-
-  function deleteSession() {
-    state.selectorAction = "delete";
-  }
-
-  function confirmDeleteAllSessions() {
-    logSelectorState.showDeleteAllModal = true;
-  }
-
-  function deleteAllSessions() {
-    logSelectorState.showDeleteAllModal = false;
-    fetch("/api/tmux_log/delete_all", { method: "DELETE" })
-      .then(res => {
-        if (!res.ok) return res.text().then(msg => { throw new Error(msg); });
-        showSnackbar("All logs deleted successfully!", "success");
-        logSelectorState.files = [];
-        logSelectorState.logsLoadedOnce = false;
-      })
-      .catch(err => {
-        showSnackbar(`Delete-all failed: ${err.message}`, "error");
-      });
-  }
-
-  return html`
+  html`
     <div class="tmux-block">
       <div class="tmux-wrapper">
-        <div class="tmuxContainer">
-          <div class="tmuxHeader">Tmux Live Log</div>
-          <pre class="tmuxLog">${() => state.log || "Waiting for tmux output…"}</pre>
-        </div>
-      </div>
+        <section class="tmuxContainer">
+          <h1 class="tmuxHeader">Tmux Live Log</h1>
+          <pre class="tmuxLog" aria-label="Live tmux output" aria-busy="${() => state.output === null && !state.error && !state.paused}">${() => {
+            if (state.output === null && !state.error && !state.paused) {
+              return "...";
+            }
 
+            return state.output || "";
+          }}</pre>
+        </section>
+      </div>
+      <p role="status">${() => state.error}</p>
       <div class="tmux-controls">
-        <button class="tmux-control-button" @click="${captureLog}"><span aria-hidden="true">💾</span> Capture Log</button>
-        <button class="tmux-control-button" @click="${deleteSession}"><span aria-hidden="true">🗑️</span> Delete Log</button>
-        <button class="tmux-control-button" @click="${confirmDeleteAllSessions}"><span aria-hidden="true">🧨</span> Delete All Logs</button>
-        <button class="tmux-control-button" @click="${downloadSessions}"><span aria-hidden="true">⬇️</span> Download Log</button>
-        <button class="tmux-control-button" @click="${togglePause}">${() => state.paused ? html`<span aria-hidden="true">▶️</span> Resume Log` : html`<span aria-hidden="true">⏸️</span> Pause Log`}</button>
-        <button class="tmux-control-button" @click="${() => state.selectorAction = "rename"}"><span aria-hidden="true">✏️</span> Rename Log</button>
+        <button type="button" class="tmux-control-button" disabled="${() => state.busy}" @click="${capture}">💾 Capture Log</button>
+        <button type="button" class="tmux-control-button" disabled="${() => state.busy}" @click="${() => chooseLog("delete")}">🗑️ Delete Log</button>
+        <button type="button" class="tmux-control-button" disabled="${() => state.busy}" @click="${deleteAll}">🧨 Delete All Logs</button>
+        <button type="button" class="tmux-control-button" disabled="${() => state.busy}" @click="${() => chooseLog("download")}">⬇️ Download Log</button>
+        <button type="button" class="tmux-control-button" @click="${() => {
+          state.paused = !state.paused;
+          connectStream();
+        }}">
+          ${() => state.paused ? "▶️ Resume Log" : "⏸️ Pause Log"}
+        </button>
+        <button type="button" class="tmux-control-button" disabled="${() => state.busy}" @click="${() => chooseLog("rename")}">✏️ Rename Log</button>
       </div>
-
-      ${() => state.selectorAction
-        ? TmuxLogSelector({
-            action: state.selectorAction,
-            closeFn: () => (state.selectorAction = null)
-          })
-        : ""
-      }
-
-      ${() => logSelectorState.showDeleteAllModal ? Modal({
-        title: "Delete All Logs",
-        message: "Are you sure you want to delete all of your session logs?",
-        onConfirm: deleteAllSessions,
-        onCancel: () => { logSelectorState.showDeleteAllModal = false },
-        confirmText: "Delete All"
-      }) : ""}
     </div>
-  `;
+  `(container);
+
+  document.addEventListener("visibilitychange", connectStream);
+  connectStream();
+
+  return () => {
+    controller.abort();
+    closeStream();
+    selector?.close();
+    document.removeEventListener("visibilitychange", connectStream);
+  };
 }

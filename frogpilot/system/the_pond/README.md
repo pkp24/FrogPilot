@@ -1,130 +1,82 @@
 # The Pond
 
-**The Pond** is the on-device web interface for a FrogPilot/openpilot comma device:
-manage settings, browse/stream dashcam + screen recordings, read error logs, control
-navigation, lock/unlock Toyota doors, manage Tailscale, and set Toyota security keys —
-all from a phone or PC browser on the same network.
+The Pond is FrogPilot's web interface. Use it to browse recordings, set a navigation destination,
+make themes, read logs, manage toggles and access the device tools from a phone or computer.
 
-It is served by a Flask app (`the_pond.py`) launched by the manager
-(`PythonProcess("the_pond", …)`), on **port 8082 on-device / 8083 on PC**.
-On-device it is reachable at **`http://ThePond.local`** (the hostname is
-advertised over mDNS, and a kernel NAT redirect sends port 80 → 8082) or
-directly at `http://<device-ip>:8082`.
+The manager starts it automatically. On the device, open `http://ThePond.local` or
+`http://<device-ip>:8082`. The device advertises ThePond.local through mDNS and redirects port 80
+to 8082. PC mode uses `http://localhost:8083` and doesn't install the redirect or advertise mDNS.
 
----
+## Features
 
-## Architecture
+- Home shows driving statistics, storage usage and software information.
+- Navigation manages Mapbox and AMap keys, searches destinations, previews routes, and saves favorites,
+  Home and Work. Send Destination sends a destination to FrogPilot, which calculates its own route.
+- Dashcam Routes plays available camera segments, combines footage for download, and manages route names,
+  preservation and deletion. Up to five whole routes can have retention priority. Critical storage
+  cleanup can still remove them. Bulk deletion keeps preserved routes unless explicitly included.
+- Screen Recordings plays, downloads, renames and deletes completed captures from the on-device recorder.
+- Theme Maker edits colors, images, sounds and signals. It previews assets and supports ordered signal
+  frames. Load into editor, Save on device, Apply to device and Submit for community use are separate
+  actions. Save and Apply change selected categories; unselected categories are retained.
+- Tools view/copy/download error logs, stream or save tmux output, back up/restore/reset toggles, and
+  export collected speed limits. Supported vehicles also expose door control and Toyota security keys.
+- Tailscale installs and manages its own installation and provides the sign-in handoff. Installations
+  managed elsewhere are left alone.
 
-- **Backend** — a single Flask app built by `create_app()` (`the_pond.py`), run
-  threaded. Pure, dependency-free logic (path containment, allowlists, the
-  origin/onroad gates, segment grouping, date formatting) lives in `helpers.py` so it is
-  unit-testable on any host without the openpilot stack. Media/transcode helpers are in
-  `utilities.py`.
-- **Frontend** — native ES modules under `assets/`, rendered with
-  [Arrow.js](https://www.arrow-js.com) (`@arrow-js/core`) + `@remix-run/router`. **No
-  build step, no Node tooling, no bundler.**
-- **Vendored, no build step** — every third-party asset (Arrow, the router, Mapbox GL,
-  Bootstrap Icons, Font Awesome, Open Sans) is **vendored under `assets/vendor/`** and
-  served locally, so the static shell loads with **no CDN requests**. The app does make
-  several external calls at runtime, each with a timeout / degraded mode:
-  - Mapbox map tiles, Search and Directions (`api.mapbox.com`) with the user's key (client-side);
-  - the Tailscale package index + archive download (`pkgs.tailscale.com`) during install;
-  - GitLab commit + Discord notification (`frogpilot.com/api/...`) on theme submit.
+## Implementation
 
-### Layout
+One threaded Flask application serves the API and local assets. The frontend uses browser ES modules,
+vendored Arrow templates and a fixed page map. There's no frontend build step. Page modules export
+`mount(container)` and return a cleanup function for their requests, streams, playback and previews.
+Theme Maker intentionally keeps its editor draft across page navigation.
 
-```
-the_pond.py        Flask app (create_app/main), all routes, origin + onroad
-                   gates, mDNS responder + port-80 redirect
-helpers.py         pure stdlib seams (testable without openpilot): containment,
-                   Origin/Host, allowlists, onroad gates, segments, dates, mDNS
-utilities.py       media: bounded ffmpeg (semaphore + nice), Range streaming, caches
-templates/index.html   static SPA shell (no Jinja)
-assets/components/     Arrow components (router, sidebar, home, nav, recordings, tools…)
-assets/js/             shared helpers (api.js fetchJson/downloadBlob, snackbar, utils)
-assets/vendor/         vendored offline deps (arrow, router, mapbox-gl, fonts, icons)
-tests/                 host pytest + static gate + node security tests; backend pytest (container)
-```
+`DeviceState` owns the shared device operation locks. `MediaProcessor` owns media conversion,
+worker limits, output locks and caches. Python imports stay at the top, with FrogPilot imports
+in their own section; related declarations are grouped and alphabetized.
 
----
+| File | Responsibility |
+| --- | --- |
+| `the_pond.py` | Application setup, request gates, response headers and startup |
+| `device.py` | Device state, statistics, Params, toggles, doors and security keys |
+| `discovery.py` | mDNS and the device port redirect |
+| `logs.py` | Error logs and saved/live tmux output |
+| `media.py` | Recordings, routes, previews, downloads and file ownership |
+| `navigation.py` | Destinations, favorites and navigation keys |
+| `tailscale.py` | Managed installation, sign-in handoff and removal |
+| `themes.py` | Theme assets, selected-category save/apply and download handoff |
+| `../../common/frogpilot_api.py` | Community submission and upload protocols |
+| `helpers.py` | Shared request, name, path and origin checks |
+| `assets/components/` | Shell and page modules/styles |
+| `assets/js/` | Shared requests, formatting and notifications |
 
-## Security model
+Mapbox GL, fonts, icons and Arrow are served locally. Map/search/routing still use Mapbox services.
+Tailscale installation downloads official packages and verifies their checksum. Community theme
+submission uses the existing FrogPilot API and its returned upload destinations.
 
-The Pond does not require a login token. Any browser or client that can reach the
-device's HTTP port can access the UI and API.
+## Access and driving state
 
-- **Origin checks** — state-changing requests must carry a positively-matching
-  `Origin` (or `Referer` fallback); an absent header does not pass. This blocks
-  cross-site browser requests from unrelated origins, but it is not authentication.
-- **Security headers** — every response carries a strict `Content-Security-Policy`
-  (`script-src 'self'`, scoped Mapbox exceptions), `X-Frame-Options: DENY`,
-  `X-Content-Type-Options: nosniff`, and `Referrer-Policy: same-origin`.
-- **Transport** — the server binds `0.0.0.0` over **plain HTTP** (no TLS), so SecOC
-  keys, recordings, logs, and settings are only as private as the network path. Reach
-  The Pond over **Tailscale or loopback**, not an untrusted shared Wi-Fi/hotspot.
-- **Discovery / port 80** — on-device, The Pond answers mDNS queries for
-  `ThePond.local` (broadcasting its current IP on the LAN) and installs an `iptables`
-  NAT redirect so port **80** transparently reaches 8082. This is reachability
-  convenience, not authentication: it widens the open surface to port 80 and
-  advertises the hostname on the local network, while the Origin, CSP, and onroad
-  gates above still apply. PC mode does neither.
-- **Onroad lockout** — while `IsOnroad` is true, the server returns **423** for the
-  mid-drive-dangerous routes: reboot/reset, theme-apply, toggles-restore, Tailscale
-  setup/uninstall, and the four bulk **delete-all** routes. Single-item deletes, door
-  lock/unlock, and setting a destination stay allowed. SecOC key write/delete are **not**
-  yet gated (pending in-vehicle validation — see the remediation report). A polled overlay
-  covers the UI (with a "continue anyway" escape for bench/parked use).
+The Pond has no separate login and uses HTTP. Any client that can reach its port can access it while
+unlocked. Host, Origin/Referer and browser security headers limit browser-originated requests; they
+aren't a substitute for controlling network access. Keep backups private because they contain settings.
+Stored secret Mapbox/AMap and Toyota security key values aren't returned by their management pages.
 
----
+The whole interface and feature API lock while driving, when Park isn't confirmed, or when device state
+is unknown/stale. Offroad or confirmed Park allows general use. Only the shell, local application assets
+and state check remain available while locked. Leaving a page or entering lockout stops its disposable
+work; streamed feature responses also recheck state. Already-started file mutations settle safely.
+Door commands and toggle resets require offroad state even in Park.
 
-## Running
+## Development
 
-On a comma device the manager starts it automatically
-(`PythonProcess("the_pond", …)` in `system/manager/process_config.py`). To run/debug
-manually on a machine with the openpilot env (Linux):
+Run in an existing openpilot environment with:
 
-```bash
+```sh
 python -m openpilot.frogpilot.system.the_pond.the_pond
 ```
 
-On-device, browse to **`http://ThePond.local`** (or `http://<device-ip>:8082`).
-In PC mode the app is available at `http://localhost:8083`.
-
----
-
-## Tests
-
-The suite under `tests/` (see `tests/README.md` for which test runs where):
-
-- **Host tests** — run on any machine (Windows/macOS/Linux), no openpilot stack:
-  ```bash
-  # from frogpilot/system/the_pond/
-  python -m pytest tests/ -q          # helpers, archive-safety, route inventory/contract, static gate
-  python tests/check_static.py        # static XSS-sink / header / dead-code gate (also run inside pytest)
-  node tests/js/security.mjs          # frontend redirect-validation + XSS-sink regression
-  ```
-  `test_route_inventory.py` snapshots the live route table (origin/onroad contracts);
-  `test_route_contract.py` checks the frontend `fetch()` ↔ backend route contract;
-  `check_static.py` enforces the output-encoding and removed-dead-code baselines.
-- **Backend tests** — require the Linux openpilot stack (run in the pinned
-  `openpilot-base` container, or a local Linux env where `import openpilot` works):
-  ```bash
-  python -m pytest frogpilot/system/the_pond/tests/test_routes_smoke.py -q   # Flask origin/onroad gate
-  ```
-  On a host without the stack `test_routes_smoke.py` `pytest.importorskip`s cleanly, so
-  the host commands above stay green everywhere.
-
----
-
-## Adding a page
-
-1. Add a component under `assets/components/`.
-2. Register it in `assets/components/router.js` (`createRoute(id, "/path", Component)`).
-3. Add a sidebar entry in `assets/components/sidebar.js`.
-4. If it calls the backend, add the route to `the_pond.py` and a corresponding entry so
-   `test_route_contract.py` stays green. Import Arrow from the vendored module:
-   `import { html, reactive } from "/assets/vendor/arrow.mjs"`.
-5. **Output encoding:** render any user/server-supplied text with the function form
-   `${() => value}` (a safe reactive text node), never the bare `${value}` form — in
-   Arrow the bare form is concatenated into `innerHTML` and is an XSS sink. The static
-   gate (`check_static.py`) enforces this for the known name fields.
+Device operations affect Params, recordings, themes and system services. Use isolated temporary data
+and replace hardware/external-service boundaries when testing. Browser checks should cover desktop and
+mobile layouts, complete actions, page cleanup and driving transitions. Native checks are needed for
+file locks, retention metadata, media conversion and the device consumers. The rewrite's verification
+scripts are temporary and aren't installed as part of The Pond.

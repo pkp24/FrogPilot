@@ -52,7 +52,8 @@ def run_classic_modeld(started, params, CP: car.CarParams, classic_model, tinygr
   return started and classic_model
 
 def run_frogpilot_telemetry(started, params, CP: car.CarParams, classic_model, tinygrad_model, frogpilot_toggles) -> bool:
-  return frogpilot_toggles.frogpilot_telemetry and not frogpilot_toggles.no_logging and not frogpilot_toggles.no_uploads
+  uploads_allowed = allow_uploads(started, params, CP, classic_model, tinygrad_model, frogpilot_toggles)
+  return frogpilot_toggles.frogpilot_telemetry and not frogpilot_toggles.no_logging and uploads_allowed
 
 def run_new_modeld(started, params, CP: car.CarParams, classic_model, tinygrad_model, frogpilot_toggles) -> bool:
   return started and not (classic_model or tinygrad_model)
@@ -79,7 +80,7 @@ procs = [
   NativeProcess("loggerd", "system/loggerd", ["./loggerd"], allow_logging),
   NativeProcess("modeld", "selfdrive/modeld", ["./modeld"], run_new_modeld),
   NativeProcess("mapsd", "selfdrive/navd", ["./mapsd"], run_classic_modeld),
-  PythonProcess("navmodeld", "frogpilot.classic_modeld.navmodeld", run_classic_modeld),
+  PythonProcess("navmodeld", "frogpilot.selfdrive.modeld.classic.navmodeld", run_classic_modeld),
   NativeProcess("sensord", "system/sensord", ["./sensord"], only_onroad, enabled=not PC),
   NativeProcess("ui", "selfdrive/ui", ["./ui"], always_run, watchdog_max_dt=(5 if not PC else None)),
   PythonProcess("soundd", "selfdrive.ui.soundd", only_onroad),
@@ -113,13 +114,13 @@ procs = [
   PythonProcess("webjoystick", "tools.bodyteleop.web", notcar),
 
   # FrogPilot processes
-  NativeProcess("classic_modeld", "frogpilot/classic_modeld", ["./classic_modeld"], run_classic_modeld),
-  PythonProcess("frogpilot_process", "frogpilot.frogpilot_process", always_run),
-  PythonProcess("frogpilot_telemetry", "frogpilot.system.frogpilot_telemetry", run_frogpilot_telemetry, enabled=not PC),
-  PythonProcess("mapd", "frogpilot.navigation.mapd", always_run),
-  PythonProcess("speed_limit_filler", "frogpilot.system.speed_limit_filler", run_speed_limit_filler),
+  NativeProcess("classic_modeld", "frogpilot/selfdrive/modeld/classic", ["./classic_modeld"], run_classic_modeld),
+  PythonProcess("frogpilot_process", "frogpilot.system.frogpilot_process", always_run),
+  PythonProcess("frogpilot_telemetry", "frogpilot.system.loggerd.frogpilot_telemetry", run_frogpilot_telemetry, enabled=not PC),
+  NativeProcess("mapd", "frogpilot/selfdrive/navd", ["env", "USE_MSGQ_PREFIX=true", "./mapd"], always_run),
+  PythonProcess("speed_limit_filler", "frogpilot.selfdrive.navd.speed_limit_filler", run_speed_limit_filler),
   PythonProcess("the_pond", "frogpilot.system.the_pond.the_pond", always_run),
-  PythonProcess("tinygrad_modeld", "frogpilot.tinygrad_modeld.tinygrad_modeld", run_tinygrad_modeld),
+  PythonProcess("tinygrad_modeld", "frogpilot.selfdrive.modeld.tinygrad.tinygrad_modeld", run_tinygrad_modeld),
 ]
 
 managed_processes = {p.name: p for p in procs}

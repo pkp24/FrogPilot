@@ -1,116 +1,151 @@
-import { html, reactive } from "/assets/vendor/arrow.mjs"
-import { Modal } from "/assets/components/modal.js";
-import { fetchJson } from "/assets/js/api.js"
+import { html, reactive } from "/assets/vendor/arrow.mjs";
+import { fetchJson } from "/assets/js/api.js";
+import { confirmDialog } from "/assets/components/modal.js";
+import { showSnackbar } from "/assets/js/snackbar.js";
 
-export function isValidTailscaleAuthUrl(u) {
-  if (typeof u !== "string" || u.length === 0) {
-    return false
+export function isValidTailscaleAuthUrl(value) {
+  if (typeof value !== "string") {
+    return false;
   }
-  let parsed
+
   try {
-    parsed = new URL(u)
+    const url = new URL(value);
+    return url.protocol === "https:" && url.hostname === "login.tailscale.com" && !url.username && !url.password && !url.port;
   } catch {
-    return false
+    return false;
   }
-  return parsed.protocol === "https:" && parsed.hostname === "login.tailscale.com"
 }
 
-export function TailscaleControl() {
-  const state = reactive({
-    status: "checking",
-    installed: false,
-    showUninstallModal: false,
-  });
+export function mount(container) {
+  const controller = new AbortController();
+  const state = reactive({ status: "checking", installed: false, external: false, error: "" });
 
-  async function checkInstallStatus() {
+  async function checkStatus() {
+    state.error = "";
+
     try {
-      const response = await fetch("/api/tailscale/installed")
-      if (!response.ok) {
-        throw new Error(`Request failed with status ${response.status}`)
+      const result = await fetchJson("/api/tailscale/installed", { signal: controller.signal });
+      if (!controller.signal.aborted) {
+        state.external = result.external === true;
+        state.installed = result.installed === true;
+        state.status = "idle";
       }
-      const result = await response.json()
-      state.installed = result.installed
     } catch (error) {
-      console.error("Failed to check Tailscale install status:", error)
-      showSnackbar("Could not check Tailscale status", "error")
-    } finally {
-      if (state.status === "checking") state.status = "idle"
+      if (!controller.signal.aborted) {
+        state.error = error.message;
+        state.status = "error";
+      }
     }
   }
 
-  function confirmUninstall() {
-    state.showUninstallModal = true;
-  }
-
-  async function handleAction() {
-    if (state.status !== "idle") {
-      return
+  async function changeInstallation(uninstalling = state.installed) {
+    if (state.status !== "idle" || state.external || controller.signal.aborted) {
+      return;
     }
 
-    const action = state.installed ? "uninstall" : "install"
-    state.status = state.installed ? "uninstalling" : "installing"
+    state.status = "confirming";
 
-    state.showUninstallModal = false;
-
-    showSnackbar(`${action.charAt(0).toUpperCase() + action.slice(1)} started...`)
-
-    const endpoint = state.installed ? "/api/tailscale/uninstall" : "/api/tailscale/setup"
-    const label = action.charAt(0).toUpperCase() + action.slice(1)
     try {
-      const result = await fetchJson(endpoint, { method: "POST" })
-      showSnackbar((result && result.message) || `${label} triggered...`)
-      if (result && result.auth_url) {
-        if (isValidTailscaleAuthUrl(result.auth_url)) {
-          window.location.href = result.auth_url;
-        } else {
-          showSnackbar("Received an invalid Tailscale login URL. Not redirecting.", "error")
+      if (uninstalling) {
+        const confirmed = await confirmDialog("Uninstall Tailscale", "Uninstall the Tailscale installation managed by The Pond?",
+          { confirmText: "Uninstall", danger: true });
+        if (!confirmed || controller.signal.aborted) {
+          return;
         }
       }
-    } catch (e) {
-      showSnackbar(e.message || `${label} failed...`, "error")
+
+      let endpoint = "/api/tailscale/setup";
+      state.status = "installing";
+      if (uninstalling) {
+        endpoint = "/api/tailscale/uninstall";
+        state.status = "uninstalling";
+      } else if (state.installed) {
+        state.status = "signingin";
+      }
+
+      const result = await fetchJson(endpoint, { method: "POST" });
+      if (controller.signal.aborted) {
+        return;
+      }
+
+      showSnackbar(result.message, "success");
+      if (!uninstalling) {
+        if (!isValidTailscaleAuthUrl(result.auth_url)) {
+          throw new Error("Tailscale returned an invalid sign-in URL. Please try again.");
+        }
+
+        window.location.assign(result.auth_url);
+      }
+    } catch (error) {
+      if (!controller.signal.aborted) {
+        showSnackbar(error.message, "error");
+      }
     } finally {
-      await checkInstallStatus();
-      state.status = "idle"
+      if (!controller.signal.aborted) {
+        state.status = "checking";
+        await checkStatus();
+      }
     }
   }
 
-  checkInstallStatus()
+  function actionLabel() {
+    if (state.status === "checking") {
+      return "...";
+    }
 
-  return html`
-    <div class="tailscale-wrapper">
-      <section class="tailscale-widget">
-        <div class="tailscale-title">
-          ${() => state.installed ? "Uninstall Tailscale" : "Install Tailscale"}
-        </div>
-        <p class="tailscale-text">
-          Tailscale creates a secure, private connection between your openpilot device and your phone or PC so you can access and control it from anywhere!
-        </p>
-        <div class="tailscale-button-wrapper">
-          <button
-            class="tailscale-button"
-            @click="${() => state.installed ? confirmUninstall() : handleAction()}"
-            disabled="${() => state.status === "checking" || state.status === "installing" || state.status === "uninstalling"}"
-          >
-            ${() => {
-              if (state.status === "checking") return "Checking..."
-              if (state.status === "installing") return "Installing..."
-              if (state.status === "uninstalling") return "Uninstalling..."
-              if (state.installed) return "Uninstall"
-              return "Install"
-            }}
-          </button>
-          <a class="tailscale-link" href="https://tailscale.com/download" target="_blank" rel="noopener noreferrer">
-            Download Tailscale on your other devices
-          </a>
-        </div>
-      </section>
-      ${() => state.showUninstallModal ? Modal({
-          title: "Confirm Uninstall",
-          message: "Are you sure you want to uninstall Tailscale?",
-          onConfirm: handleAction,
-          onCancel: () => { state.showUninstallModal = false; },
-          confirmText: "Uninstall"
-      }) : ""}
-    </div>
-  `
+    if (state.status === "installing") {
+      return "Installing...";
+    }
+
+    if (state.status === "uninstalling") {
+      return "Uninstalling...";
+    }
+
+    if (state.status === "signingin") {
+      return "Opening sign-in...";
+    }
+
+    if (state.external) {
+      return "Managed Outside The Pond";
+    }
+
+    if (state.installed) {
+      return "Uninstall";
+    }
+
+    return "Install";
+  }
+
+  html`<div class="tailscale-wrapper"><section class="tailscale-widget"><h1 class="tailscale-title">Tailscale</h1>
+    <p class="tailscale-text">${() => state.external ? "This Tailscale installation is managed outside The Pond."
+      : "Connect your device to your phone or computer through Tailscale to access The Pond remotely."}</p>
+    <p class="tailscale-text" role="status" aria-busy="${() => state.status === "checking"}">${() => {
+      if (state.status === "checking") {
+        return "...";
+      }
+
+      if (state.status === "idle" && !state.external) {
+        return state.installed ? "Tailscale is installed and managed by The Pond." : "Tailscale is not installed.";
+      }
+
+      return "";
+    }}</p>
+    ${() => state.error ? html`<p class="tailscale-text" role="alert">${() => state.error}</p>
+      <button type="button" class="tailscale-button" @click="${() => {
+        state.status = "checking";
+        checkStatus();
+      }}">Retry status check</button>` : ""}
+    <div class="tailscale-button-wrapper"><button class="tailscale-button" type="button" @click="${() => changeInstallation()}"
+      disabled="${() => state.status !== "idle" || state.external}">${actionLabel}</button>
+      ${() => state.installed && !state.external ? html`<button class="tailscale-button" type="button"
+        disabled="${() => state.status !== "idle"}" @click="${() => changeInstallation(false)}">Continue Tailscale sign-in</button>` : ""}
+      <a class="tailscale-link" href="https://tailscale.com/download" target="_blank" rel="noopener noreferrer">Download Tailscale on your other devices</a>
+    </div></section></div>`(container);
+
+  checkStatus();
+
+  return () => {
+    controller.abort();
+    container.replaceChildren();
+  };
 }
