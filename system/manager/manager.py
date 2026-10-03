@@ -18,7 +18,8 @@ from openpilot.system.athena.registration import register, UNREGISTERED_DONGLE_I
 from openpilot.common.swaglog import cloudlog, add_file_handler
 from openpilot.system.version import get_build_metadata, terms_version, training_version
 
-from openpilot.frogpilot.common.frogpilot_functions import convert_params, frogpilot_boot_functions, setup_frogpilot, uninstall_frogpilot
+from openpilot.frogpilot.common.frogpilot_api import FrogPilotAPI
+from openpilot.frogpilot.system.manager.frogpilot_functions import convert_params, frogpilot_boot_functions, setup_frogpilot, uninstall_frogpilot
 from openpilot.frogpilot.common.frogpilot_variables import EXCLUDED_KEYS, frogpilot_default_params, get_frogpilot_toggles, params_cache, params_memory
 
 
@@ -35,6 +36,8 @@ def manager_init() -> None:
     params.clear_all(ParamKeyType.DEVELOPMENT_ONLY)
 
   # FrogPilot variables
+  frogpilot_api = FrogPilotAPI(params)
+
   setup_frogpilot(build_metadata)
   convert_params(params_cache)
 
@@ -71,7 +74,7 @@ def manager_init() -> None:
   params.remove("DoToggleReset")
   params.remove("DoToggleResetStock")
 
-  frogpilot_boot_functions(build_metadata, params_cache)
+  frogpilot_boot_functions(build_metadata, params_cache, frogpilot_api)
 
   # Create folders needed for msgq
   try:
@@ -106,6 +109,9 @@ def manager_init() -> None:
 
   if not build_metadata.openpilot.is_dirty:
     os.environ['CLEAN'] = '1'
+
+  # FrogPilot variables
+  frogpilot_api.register_device(build_metadata)
 
   # init logging
   sentry.init(sentry.SentryProject.SELFDRIVE)

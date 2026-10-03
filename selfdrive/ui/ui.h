@@ -16,7 +16,7 @@
 #include "common/timing.h"
 #include "system/hardware/hw.h"
 
-#include "frogpilot/ui/frogpilot_ui.h"
+#include "frogpilot/selfdrive/ui/frogpilot_ui.h"
 
 const int UI_BORDER_SIZE = 30;
 const int UI_HEADER_HEIGHT = 420;

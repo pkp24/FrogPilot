@@ -28,6 +28,9 @@ MAX_LATERAL_JERK = 5.0
 MAX_LATERAL_ACCEL_NO_ROLL = 3.0  # m/s^2
 MAX_VEL_ERR = 5.0
 
+State = log.ControlsState.OpenpilotState
+ACTIVE_STATES = (State.enabled, State.softDisabling, State.overriding)
+
 ButtonEvent = car.CarState.ButtonEvent
 ButtonType = car.CarState.ButtonEvent.Type
 CRUISE_LONG_PRESS = 50

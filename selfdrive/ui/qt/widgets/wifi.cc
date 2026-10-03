@@ -97,7 +97,7 @@ WiFiPromptWidget::WiFiPromptWidget(QWidget *parent) : QFrame(parent) {
       title_layout->addStretch();
 
       QLabel *icon = new QLabel;
-      QPixmap pixmap("../../frogpilot/assets/other_images/icon_wifi_uploading_disabled.svg");
+      QPixmap pixmap("../../frogpilot/selfdrive/assets/offroad/icon_wifi_uploading_disabled.svg");
       icon->setPixmap(pixmap.scaledToWidth(120, Qt::SmoothTransformation));
       title_layout->addWidget(icon);
     }

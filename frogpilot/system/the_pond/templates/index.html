@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" id="htmlElement" data-theme="dark">
+<html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -9,32 +9,15 @@
     <link rel="manifest" href="/assets/manifest.json">
     <link rel="shortcut icon" href="/assets/images/favicon.ico">
 
-    <meta name="theme-color" content="#4285f4" />
+    <meta name="theme-color" content="#151414" />
 
     <link rel="stylesheet" href="/assets/vendor/bootstrap-icons/bootstrap-icons.min.css" />
-    <link rel="stylesheet" href="/assets/vendor/mapbox-gl/mapbox-gl.css">
 
-    <link rel="stylesheet" href="/assets/components/home/home.css">
     <link rel="stylesheet" href="/assets/components/main.css">
     <link rel="stylesheet" href="/assets/components/modal.css">
-    <link rel="stylesheet" href="/assets/components/navigation/navigation_destination.css">
-    <link rel="stylesheet" href="/assets/components/navigation/navigation_keys.css">
-    <link rel="stylesheet" href="/assets/components/recordings/dashcam_routes.css">
-    <link rel="stylesheet" href="/assets/components/recordings/screen_recordings.css">
     <link rel="stylesheet" href="/assets/components/sidebar.css">
-    <link rel="stylesheet" href="/assets/components/tailscale/tailscale.css">
-    <link rel="stylesheet" href="/assets/components/tools/doors.css">
-    <link rel="stylesheet" href="/assets/components/tools/error_logs.css">
-    <link rel="stylesheet" href="/assets/components/tools/speed_limits.css">
-    <link rel="stylesheet" href="/assets/components/tools/theme_maker.css">
-    <link rel="stylesheet" href="/assets/components/tools/tmux.css">
-    <link rel="stylesheet" href="/assets/components/tools/toggles.css">
-    <link rel="stylesheet" href="/assets/components/tools/tsk_manager.css">
 
     <script type="module" src="/assets/components/router.js"></script>
-    <script src="/assets/js/snackbar.js"></script>
-
-    <script src="/assets/vendor/mapbox-gl/mapbox-gl.js"></script>
 
     <link rel="stylesheet" href="/assets/vendor/open-sans/open-sans.css">
 
@@ -42,11 +25,21 @@
   </head>
 
   <body>
-    <div id="app"></div>
-    <button id="menu_button" type="button" aria-label="Open menu">
+    <div id="app" inert>
+      <div id="navigation"></div>
+      <main id="page" class="content"></main>
+    </div>
+    <div id="driving_lock" class="onroad-overlay" role="dialog" aria-modal="true" aria-labelledby="lock_title" tabindex="-1">
+      <div class="onroad-message">
+        <i class="bi bi-car-front-fill onroad-icon" aria-hidden="true"></i>
+        <h1 id="lock_title">Connecting to your device...</h1>
+        <p id="lock_message">The Pond is checking whether it is safe to unlock.</p>
+      </div>
+    </div>
+    <button id="menu_button" type="button" aria-label="Open menu" aria-controls="sidebar" aria-expanded="false" inert>
       <i class="bi bi-list" aria-hidden="true"></i>
     </button>
-    <div id="snackbar_wrapper"></div>
+    <div id="snackbar_wrapper" role="status" aria-live="polite"></div>
   </body>
 
 </html>

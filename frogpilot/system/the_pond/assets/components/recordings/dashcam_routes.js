@@ -1,528 +1,436 @@
-import { html, reactive } from "/assets/vendor/arrow.mjs"
-import { getOrdinalSuffix } from "/assets/components/navigation/navigation_utilities.js"
-import { Modal } from "/assets/components/modal.js";
-import { onRouteLeave } from "/assets/components/router.js"
+import { html, reactive } from "/assets/vendor/arrow.mjs";
+import { fetchEvents, fetchJson } from "/assets/js/api.js";
+import { showSnackbar } from "/assets/js/snackbar.js";
+import { confirmDialog, openDialog } from "/assets/components/modal.js";
+import { formatMediaDate, mediaCard, stopPreviews } from "/assets/components/recordings/screen_recordings.js";
 
-const state = reactive({
-  loading: true,
-  error: null,
-  routes: [],
-  selectedRoute: null,
-  showPreservedOnly: false,
-  progress: 0,
-  total: 0,
-  showDeleteAllModal: false,
-  isDeletingAll: false,
-})
-
-function formatRouteDate(dateString) {
-  const date = new Date(dateString)
-  if (isNaN(date.getTime())) {
-    return dateString
+function routeTitle(route) {
+  if (route.is_custom_name) {
+    return route.timestamp.replace(/_/g, " ");
   }
-  const month = date.toLocaleString("en-US", { month: "long" })
-  const day = date.getDate()
-  const year = date.getFullYear()
-  let hour = date.getHours()
-  const minute = date.getMinutes()
-  const ampm = hour >= 12 ? "pm" : "am"
-  hour = hour % 12
-  hour = hour || 12
-  const minuteStr = minute < 10 ? "0" + minute : minute
-  return `${month} ${day}${getOrdinalSuffix(day)}, ${year} - ${hour}:${minuteStr}${ampm}`
+
+  return formatMediaDate(route.timestamp);
 }
 
-let routesController = null
+export function mount(container) {
+  const controller = new AbortController();
+  const state = reactive({ busy: false, error: "", loading: true, preservedOnly: false, routes: [], total: 0 });
+  let player = null;
+  let bulkDialog = null;
 
-async function fetchRoutes() {
-  if (routesController) routesController.abort()
-  const controller = new AbortController()
-  routesController = controller
-  try {
-    const userTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-    const response = await fetch(`/api/routes?timezone=${encodeURIComponent(userTimezone)}`, { signal: controller.signal });
-    if (!response.ok) throw new Error();
-
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      if (controller.signal.aborted) return;
-
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n\n");
-      buffer = lines.pop();
-
-      for (const line of lines) {
-        if (line.startsWith("data: ")) {
-          try {
-            const data = JSON.parse(line.substring(6));
-            if (data.progress !== undefined && data.total !== undefined) {
-              state.progress = data.progress;
-              state.total = data.total;
-            }
-            if (data.routes) {
-              const routes = data.routes.map(route => ({
-                ...route,
-                timestamp: formatRouteDate(route.timestamp),
-              }));
-              state.routes.push(...routes);
-            }
-          } catch (e) {
-            console.error("Failed to parse JSON:", e);
-          }
-        }
-      }
+  async function refresh() {
+    if (controller.signal.aborted) {
+      return;
     }
-  } catch (_) {
-    if (controller.signal.aborted) return;
-    state.error = "Couldn't load routes. Please try again later..."
-  } finally {
-    if (routesController === controller) state.loading = false
-  }
-}
 
-fetchRoutes()
-onRouteLeave(() => { if (routesController) routesController.abort() })
+    state.loading = true;
+    state.error = "";
+    state.routes = [];
+    state.total = 0;
 
-function refresh() {
-  if (routesController) routesController.abort()
-  state.error = null
-  state.loading = true
-  state.routes = []
-  fetchRoutes()
-}
-
-let overlay = null
-
-function openDialog(template) {
-  const o = document.createElement("div")
-  o.className = "dialog-overlay"
-  template(o)
-  document.body.appendChild(o)
-  const box = o.querySelector(".dialog-box")
-  if (box) {
-    box.setAttribute("role", "dialog")
-    box.setAttribute("aria-modal", "true")
-  }
-  const focusTarget = o.querySelector("input") || o.querySelector('button, [href], [tabindex]:not([tabindex="-1"])')
-  if (focusTarget) focusTarget.focus()
-  o.addEventListener("keydown", e => {
-    if (e.key === "Escape") {
-      e.preventDefault()
-      closeDialog(o)
-      return
-    }
-    if (e.key === "Tab") {
-      const focusable = o.querySelectorAll(
-        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
-      )
-      if (!focusable.length) return
-      const first = focusable[0]
-      const last = focusable[focusable.length - 1]
-      const active = document.activeElement
-      if (e.shiftKey && active === first) {
-        e.preventDefault()
-        last.focus()
-      } else if (!e.shiftKey && active === last) {
-        e.preventDefault()
-        first.focus()
-      }
-    }
-  })
-  return o
-}
-
-function closeDialog(o) {
-  if (o) o.remove()
-}
-
-async function deleteRoute(route) {
-  const onDelete = async () => {
     try {
-      const res = await fetch(`/api/routes/${encodeURIComponent(route.name)}`, { method: "DELETE" })
-      if (res.ok) {
-        state.routes = state.routes.filter(r => r.name !== route.name)
-        closeDialog(dlg)
-        closeOverlay()
-        refresh()
-        showSnackbar("Route deleted!")
-      } else {
-        showSnackbar("Delete failed...", "error")
-      }
-    } catch {
-      showSnackbar("Delete failed...", "error")
-    }
-  }
-  const dlg = openDialog(html`
-    <div class="dialog-box">
-      <p>Delete “${() => route.timestamp}”?</p>
-      <div class="dialog-buttons">
-        <button class="btn btn-cancel" @click="${() => closeDialog(dlg)}">Cancel</button>
-        <button class="btn btn-danger btn-del" @click="${onDelete}">Delete</button>
-      </div>
-    </div>`)
-}
-
-async function resetRouteName(route, dlg) {
-  try {
-    const res = await fetch(`/api/routes/clear_name`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: route.name })
-    });
-    if (res.ok) {
-      const { timestamp } = await res.json();
-      closeDialog(dlg);
-      const routeInList = state.routes.find(r => r.name === route.name);
-      if (routeInList) {
-        routeInList.timestamp = formatRouteDate(timestamp);
-      }
-      route.timestamp = formatRouteDate(timestamp);
-      const overlayTitleSpan = overlay?.querySelector(".media-player-title span");
-      if (overlayTitleSpan) {
-        overlayTitleSpan.textContent = formatRouteDate(timestamp);
-      }
-      showSnackbar("Route name reset!");
-    } else {
-      showSnackbar("Resetting name failed...", "error");
-    }
-  } catch {
-    showSnackbar("Resetting name failed...", "error");
-  }
-}
-
-async function renameRoute(route) {
-  const onSave = async () => {
-    const newName = dlg.querySelector(".rn-input").value.trim();
-    if (!newName) return;
-    try {
-      const res = await fetch(`/api/routes/rename`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ old: route.name, new: newName })
-      });
-      if (res.ok) {
-        closeDialog(dlg);
-        const routeInList = state.routes.find(r => r.name === route.name);
-        if (routeInList) {
-          routeInList.timestamp = newName;
+      await fetchEvents("/api/routes", data => {
+        if (data.routes) {
+          state.routes.push(...data.routes);
         }
-        route.timestamp = newName;
-        const overlayTitleSpan = overlay?.querySelector(".media-player-title span");
-        if (overlayTitleSpan) {
-          overlayTitleSpan.textContent = newName;
+
+        if (data.total !== undefined) {
+          state.total = data.total;
         }
-        showSnackbar("Route renamed!");
-      } else {
-        showSnackbar("Rename failed...", "error");
-      }
-    } catch {
-      showSnackbar("Rename failed...", "error");
-    }
-  };
-  const dlg = openDialog(html`
-    <div class="dialog-box">
-      <p>Rename "${() => route.timestamp}"</p>
-      <input class="rn-input" aria-label="New route name" value="${() => route.timestamp}" />
-      <div class="dialog-buttons">
-        <button class="btn-cancel" @click="${() => closeDialog(dlg)}">Cancel</button>
-        <button class="btn-reset" @click="${() => resetRouteName(route, dlg)}">Reset</button>
-        <button class="btn-save" @click="${onSave}">Save</button>
-      </div>
-    </div>`);
-}
-
-async function openOverlay(route) {
-  if (overlay) return;
-
-  overlay = document.createElement("div");
-  overlay.className = "media-player-overlay";
-  overlay.innerHTML = `
-    <div class="media-player-content">
-      <div class="media-player-title">
-        <span></span>
-        <button type="button" class="action-rename-icon" aria-label="Rename route"><i class="bi bi-pencil-fill"></i></button>
-      </div>
-      <video controls autoplay muted>
-        <source type="video/mp4">
-      </video>
-      <div class="button-row">
-        <button class="close-button action-close">Close</button>
-        <button class="close-button camera-button active" data-camera="forward">Forward</button>
-        <button class="close-button camera-button" data-camera="wide">Wide</button>
-        <button class="close-button camera-button" data-camera="driver">Driver</button>
-        <button class="close-button action-download">Download</button>
-        <button class="close-button action-delete">Delete</button>
-      </div>
-    </div>`;
-  overlay.querySelector(".media-player-title span").textContent = route.timestamp;
-  overlay.querySelector("video source").setAttribute(
-    "src",
-    `/thumbnails/${encodeURIComponent(route.name)}--0/preview.png`
-  );
-  document.body.appendChild(overlay);
-  overlay.setAttribute("role", "dialog");
-  overlay.setAttribute("aria-modal", "true");
-  overlay.setAttribute("aria-label", route.timestamp ? `Route: ${route.timestamp}` : "Route video");
-
-  overlay.addEventListener("click", e => {
-    if (e.target === overlay) closeOverlay();
-  });
-  overlay.addEventListener("keydown", e => {
-    if (e.key === "Escape") { e.preventDefault(); closeOverlay(); return; }
-    if (e.key === "Tab") {
-      const f = overlay.querySelectorAll('button, [href], input, [tabindex]:not([tabindex="-1"])');
-      if (!f.length) return;
-      const first = f[0], last = f[f.length - 1], active = document.activeElement;
-      if (e.shiftKey && active === first) { e.preventDefault(); last.focus(); }
-      else if (!e.shiftKey && active === last) { e.preventDefault(); first.focus(); }
-    }
-  });
-  overlay.querySelector(".action-close")?.focus();
-  overlay.querySelector(".action-rename-icon").onclick = () => renameRoute(route);
-  overlay.querySelector(".action-close").onclick = closeOverlay;
-  overlay.querySelector(".action-delete").onclick = () => deleteRoute(route);
-
-  const vid = overlay.querySelector("video");
-  const downloadButton = overlay.querySelector(".action-download");
-
-  let segments;
-  let current = 0;
-  let selectedCamera = "forward";
-
-  const cameraButtons = overlay.querySelectorAll(".camera-button");
-  cameraButtons.forEach(btn => { btn.disabled = true; });
-
-  downloadButton.onclick = () => {
-    const link = document.createElement("a");
-    const videoPath = `/video/${encodeURIComponent(route.name)}/combined?camera=${selectedCamera}`;
-    link.href = videoPath;
-    link.download = `${route.timestamp}-${selectedCamera}.mp4`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  };
-
-  (async () => {
-    try {
-      const response = await fetch(`/api/routes/${encodeURIComponent(route.name)}`);
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-      const data = await response.json();
-      segments = data.segment_urls;
-
-      if (!segments || segments.length === 0) {
-        segments = [`/video/${encodeURIComponent(route.name)}--0`];
-      }
-      vid.src = `${segments[0]}?camera=forward`;
-      vid.load();
-      vid.play();
-      cameraButtons.forEach(btn => { btn.disabled = false; });
+      }, { signal: controller.signal });
     } catch (error) {
-      showSnackbar("Error: Could not load combined route video.", "error");
+      if (!controller.signal.aborted) {
+        state.error = error.message;
+      }
+    } finally {
+      if (!controller.signal.aborted) {
+        state.loading = false;
+      }
     }
-  })();
-
-  vid.addEventListener("ended", () => {
-    if (!segments || !segments.length) return;
-    current++;
-    if (current < segments.length) {
-      const videoPath = segments[current].includes("?") ? `${segments[current]}&camera=${selectedCamera}` : `${segments[current]}?camera=${selectedCamera}`
-      vid.src = videoPath;
-      vid.load();
-      vid.play();
-    }
-  });
-
-  overlay.querySelectorAll(".camera-button").forEach(button => {
-    button.addEventListener("click", e => {
-      if (!segments || !segments.length) return;
-      overlay.querySelectorAll(".camera-button").forEach(btn => btn.classList.remove("active"));
-      e.target.classList.add("active");
-      selectedCamera = e.target.dataset.camera;
-      vid.src = segments[current].includes("?") ? `${segments[current]}&camera=${selectedCamera}` : `${segments[current]}?camera=${selectedCamera}`;
-      vid.load();
-      vid.play();
-    });
-  });
-}
-
-function closeOverlay() {
-  if (!overlay) return
-  overlay.remove()
-  overlay = null
-  state.selectedRoute = null
-}
-
-async function togglePreserved(route, e) {
-  e.stopPropagation()
-  const newPreservedState = !route.is_preserved
-  const method = newPreservedState ? "POST" : "DELETE"
-  try {
-    const response = await fetch(`/api/routes/${encodeURIComponent(route.name)}/preserve`, { method })
-    if (response.ok) {
-      route.is_preserved = newPreservedState
-    } else {
-      const errorData = await response.json()
-      showSnackbar(errorData.error || "Failed to update preserved state...", "error")
-    }
-  } catch (_) {
-    showSnackbar("An error occurred...", "error")
   }
-}
 
-async function deleteAllRoutes() {
-  state.showDeleteAllModal = false
-  state.isDeletingAll = true
-  try {
-    const res = await fetch("/api/routes/delete_all", { method: "DELETE" })
-    if (!res.ok) throw new Error()
-    await refresh()
-    showSnackbar("All routes deleted!")
-  } catch {
-    showSnackbar("An error occurred while deleting all routes...", "error")
-  } finally {
-    state.isDeletingAll = false
+  async function setPreserved(route, preserve) {
+    if (state.busy) {
+      return;
+    }
+
+    state.busy = true;
+
+    try {
+      const result = await fetchJson(`/api/routes/${encodeURIComponent(route.name)}/preserve`, { method: preserve ? "POST" : "DELETE" });
+
+      route.is_preserved = result.preservation !== null;
+      route.preservation = result.preservation;
+      if (!controller.signal.aborted) {
+        showSnackbar(result.message);
+      }
+    } catch (error) {
+      if (!controller.signal.aborted) {
+        showSnackbar(error.message, "error");
+      }
+    } finally {
+      state.busy = false;
+    }
   }
-}
 
-export function RouteRecordings() {
-  onRouteLeave(closeOverlay)
-  if (state.selectedRoute && !overlay) openOverlay(state.selectedRoute);
+  async function rename(route, reset = false) {
+    if (state.busy) {
+      return;
+    }
 
-  return html`
-    <div class="screen-recordings-wrapper">
-      <div class="screen-recordings-widget">
-        <div class="screen-recordings-title">Dashcam Routes</div>
-        <button
-          class="show-preserved-button"
-          @click="${() => (state.showPreservedOnly = !state.showPreservedOnly)}"
-          disabled="${() => state.loading && state.routes.length === 0}"
-        >
-          ${() => (state.showPreservedOnly ? "Show All" : "Show Only Preserved Routes")}
-        </button>
+    state.busy = true;
 
-        ${() => {
-          const routesToShow = state.routes.filter(r => !state.showPreservedOnly || r.is_preserved);
+    try {
+      let url = "/api/routes/clear_name";
+      let body = { name: route.name };
+      if (!reset) {
+        const name = await confirmDialog("Rename route", "Choose a display name for this drive.", {
+          confirmText: "Save", inputValue: routeTitle(route),
+        });
+        if (typeof name !== "string" || !name.trim() || controller.signal.aborted) {
+          return;
+        }
 
-          if (routesToShow.length === 0) {
-            if (state.loading && state.total > 0) {
-              return html`<p class="screen-recordings-message">Processing Routes: ${state.progress} of ${state.total}</p>`;
-            }
-            if (state.loading && !state.isDeletingAll) {
-              return html`<p class="screen-recordings-message">Loading...</p>`;
-            }
-            if (state.isDeletingAll) {
-              return html`<p class="screen-recordings-message">Deleting routes...</p>`;
-            }
-            if (state.showPreservedOnly) {
-              return html`<p class="screen-recordings-message">No preserved routes...</p>`;
-            }
-            if (state.error) {
-              return html`<p class="screen-recordings-message">${state.error}</p>`;
-            }
-            return html`<p class="screen-recordings-message">No routes found...</p>`;
+        url = "/api/routes/rename";
+        body = { old: route.name, new: name.trim() };
+      }
+
+      await fetchJson(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+
+      player?.close();
+      await refresh();
+
+      if (!controller.signal.aborted) {
+        showSnackbar(reset ? "Route name reset!" : "Route renamed!");
+      }
+    } catch (error) {
+      if (!controller.signal.aborted) {
+        showSnackbar(error.message, "error");
+      }
+    } finally {
+      state.busy = false;
+    }
+  }
+
+  async function remove(route) {
+    if (state.busy) {
+      return;
+    }
+
+    state.busy = true;
+
+    try {
+      let message = `Delete “${routeTitle(route)}” and all its recorded segments? This cannot be undone.`;
+      if (route.is_preserved) {
+        message += " This route is preserved; this deletion still removes it.";
+      }
+
+      const confirmed = await confirmDialog("Delete route", message, { confirmText: "Delete route", danger: true });
+      if (!confirmed || controller.signal.aborted) {
+        return;
+      }
+
+      await fetchJson(`/api/routes/${encodeURIComponent(route.name)}`, { method: "DELETE" });
+
+      player?.close();
+      await refresh();
+
+      if (!controller.signal.aborted) {
+        showSnackbar("Route deleted!");
+      }
+    } catch (error) {
+      if (!controller.signal.aborted) {
+        showSnackbar(error.message, "error");
+      }
+    } finally {
+      state.busy = false;
+    }
+  }
+
+  function removeAll() {
+    if (bulkDialog) {
+      return;
+    }
+
+    const selection = reactive({ includePreserved: false });
+    const count = () => state.routes.filter(route => selection.includePreserved || !route.is_preserved).length;
+    const dialog = openDialog("Delete dashcam routes", html`
+      <p>${() => selection.includePreserved
+        ? `Delete all ${count()} routes, including preserved routes? This cannot be undone.`
+        : `Delete ${count()} unpreserved routes? Preserved routes will be kept. This cannot be undone.`}</p>
+      <label class="include-preserved">
+        <input type="checkbox" @change="${event => {
+          selection.includePreserved = event.currentTarget.checked;
+        }}"
+          disabled="${() => state.busy}"> Include preserved routes
+      </label>
+      <div class="dialog-buttons">
+        <button type="button" @click="${() => dialog.close()}">Cancel</button>
+        <button type="button" class="btn-del" disabled="${() => state.busy || !count()}" @click="${async () => {
+          if (state.busy || controller.signal.aborted) {
+            return;
           }
 
-          return html`
-            <div class="screen-recordings-grid">
-              ${routesToShow.map(
-                route => html`
-                  <div
-                    class="recording-card"
-                    @mouseenter="${e => {
-                      if (state.selectedRoute) return;
+          state.busy = true;
 
-                      const card = e.currentTarget;
-                      const gif = card.querySelector(".recording-preview-gif");
-                      const png = card.querySelector(".recording-preview-png");
+          try {
+            await fetchJson("/api/routes/delete_all", {
+              method: "DELETE", headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ include_preserved: selection.includePreserved }),
+            });
 
-                      if (card.dataset.gifLoaded) {
-                        png.style.display = "none";
-                        gif.style.display = "block";
-                        return;
-                      }
+            dialog.close();
+            player?.close();
+            await refresh();
 
-                      card.dataset.loadingGif = "true";
-                      const preloader = new Image();
-                      preloader.onload = () => {
-                        if (card.dataset.loadingGif === "true") {
-                          gif.src = preloader.src;
-                          png.style.display = "none";
-                          gif.style.display = "block";
-                          card.dataset.gifLoaded = true;
-                        }
-                        delete card.dataset.loadingGif;
-                      };
-                      preloader.onerror = () => {
-                        console.error("Failed to load preview GIF:", preloader.src);
-                        delete card.dataset.loadingGif;
-                      };
-
-                      preloader.src = gif.dataset.src;
-                    }}"
-                    @mouseleave="${e => {
-                      const card = e.currentTarget;
-                      card.querySelector(".recording-preview-png").style.display = "block";
-                      card.querySelector(".recording-preview-gif").style.display = "none";
-                      if (card.dataset.loadingGif === "true") {
-                        delete card.dataset.loadingGif;
-                      }
-                    }}"
-                    @click="${() => {
-                      state.selectedRoute = route;
-                    }}"
-                  >
-                    <button type="button" class="preserved-icon" aria-label="${() => (route.is_preserved ? "Remove preserved route" : "Preserve route")}" @click="${e => togglePreserved(route, e)}">
-                      ${() => html`<i class="bi ${route.is_preserved ? "bi-heart-fill" : "bi-heart"}"></i>`}
-                    </button>
-                    <div class="recording-preview-container">
-                      <img
-                        src="${route.png}"
-                        class="recording-preview recording-preview-png"
-                        style="display:block;"
-                        @error="${e => { e.target.style.visibility = "hidden" }}"
-                      >
-                      <img
-                        data-src="${route.gif}"
-                        class="recording-preview recording-preview-gif"
-                        style="display:none;"
-                      >
-                    </div>
-                    <p class="recording-filename">${() => route.timestamp}</p>
-                  </div>
-                `
-              )}
-            </div>
-          `;
-        }}
-        ${() => {
-          if (state.routes.length > 0) {
-            return html`
-              <button
-                class="delete-all-button"
-                @click="${() => (state.showDeleteAllModal = true)}"
-                disabled="${() => state.isDeletingAll}"
-              >
-                ${() => (state.isDeletingAll ? "Deleting..." : "Delete All Routes")}
-              </button>
-            `;
+            if (!controller.signal.aborted) {
+              showSnackbar("Selected routes deleted!");
+            }
+          } catch (error) {
+            if (!controller.signal.aborted) {
+              showSnackbar(error.message, "error");
+            }
+          } finally {
+            state.busy = false;
           }
-          return "";
-        }}
+        }}">${() => state.busy ? "Deleting..." : "Delete selected routes"}</button>
       </div>
-      ${() => state.showDeleteAllModal ? Modal({
-          title: "Confirm Delete All",
-          message: "Are you sure you want to delete all routes? This action cannot be undone...",
-          onConfirm: deleteAllRoutes,
-          onCancel: () => { state.showDeleteAllModal = false; },
-          confirmText: "Delete All"
-      }) : ""}
+    `);
+    bulkDialog = dialog;
+    dialog.addEventListener("close", () => {
+      bulkDialog = null;
+    }, { once: true });
+  }
+
+  function play(route) {
+    if (player) {
+      return;
+    }
+
+    stopPreviews(container);
+    const requestController = new AbortController();
+    const playback = reactive({ camera: "forward", cameras: {}, error: "", index: 0, loading: true });
+    const segmentUrls = () => playback.cameras[playback.camera] || [];
+    const downloadUrl = () => `/video/${encodeURIComponent(route.name)}/combined?camera=${playback.camera}`;
+    const dialog = openDialog(routeTitle(route), html`
+      <div class="media-player-content">
+        <div class="media-video" aria-busy="true">
+          <video controls autoplay muted playsinline></video>
+        </div>
+        <p class="media-player-status" role="status">${() => {
+          if (playback.error) {
+            return playback.error;
+          }
+
+          if (playback.loading) {
+            return "Recorded segment 0 of 0";
+          }
+
+          return `Recorded segment ${playback.index + 1} of ${segmentUrls().length}`;
+        }}</p>
+        <div class="button-row media-segments">
+          <button type="button" class="close-button" disabled="${() => playback.loading || playback.index === 0}"
+            @click="${() => loadSegment(playback.index - 1)}">Previous segment</button>
+          <button type="button" class="close-button" disabled="${() => playback.loading || playback.index + 1 >= segmentUrls().length}"
+            @click="${() => loadSegment(playback.index + 1)}">Next segment</button>
+        </div>
+        <div class="button-row media-cameras">
+          ${["forward", "wide", "driver"].map(camera => html`
+            <button type="button" class="close-button camera-button" aria-pressed="${() => playback.camera === camera}"
+              disabled="${() => playback.loading || !playback.cameras[camera]?.length}" @click="${() => changeCamera(camera)}">
+              ${() => camera[0].toUpperCase() + camera.slice(1)}
+            </button>
+          `)}
+        </div>
+        <p class="media-preservation-note">${() => {
+          if (route.preservation === "legacy") {
+            return "An existing flag preserves the first segment. It stays when whole-route priority is removed.";
+          }
+
+          if (route.is_preserved) {
+            return "This whole route has retention priority. It can still be removed when storage becomes critically low.";
+          }
+
+          return "Preserve up to five whole routes with retention priority.";
+        }}</p>
+        <div class="button-row">
+          <button type="button" class="close-button" disabled="${() => state.busy}" @click="${() => rename(route)}">Rename</button>
+          <button type="button" class="close-button" hidden="${() => !route.is_custom_name}" disabled="${() => state.busy}"
+            @click="${() => rename(route, true)}">Reset name</button>
+          <button type="button" class="close-button" disabled="${() => state.busy}"
+            @click="${() => setPreserved(route, route.preservation !== "route")}">
+            ${() => route.preservation === "route" ? "Unpreserve whole route" : "Preserve whole route"}
+          </button>
+          <button type="button" class="close-button" hidden="${() => route.preservation !== "legacy"}" disabled="${() => state.busy}"
+            @click="${() => setPreserved(route, false)}">Unpreserve first segment</button>
+          <a class="close-button action-download" href="${downloadUrl}" download="${() => `${routeTitle(route)}-${playback.camera}.mp4`}">Download</a>
+          <button type="button" class="close-button action-delete" disabled="${() => state.busy}" @click="${() => remove(route)}">Delete</button>
+        </div>
+      </div>
+    `);
+    dialog.classList.add("media-dialog");
+    player = dialog;
+
+    const video = dialog.querySelector("video");
+    const videoContainer = dialog.querySelector(".media-video");
+
+    function loadSegment(index, position = 0, paused = false) {
+      const url = segmentUrls()[index];
+      if (!url) {
+        return;
+      }
+
+      playback.index = index;
+      playback.error = "";
+      videoContainer.setAttribute("aria-busy", "true");
+
+      video.onloadedmetadata = () => {
+        if (position > 0 && Number.isFinite(video.duration)) {
+          video.currentTime = Math.min(position, video.duration);
+        }
+
+        if (paused) {
+          video.pause();
+        }
+      };
+
+      video.src = `${url}?camera=${playback.camera}`;
+    }
+
+    function changeCamera(camera) {
+      if (camera === playback.camera) {
+        return;
+      }
+
+      const current = segmentUrls()[playback.index];
+      const position = video.currentTime;
+      const paused = video.paused;
+      playback.camera = camera;
+
+      let index = segmentUrls().indexOf(current);
+      if (index < 0) {
+        const number = Number(current?.split("--").at(-1));
+        index = segmentUrls().findIndex(url => Number(url.split("--").at(-1)) >= number);
+        if (index < 0) {
+          index = segmentUrls().length - 1;
+        }
+
+        loadSegment(index, 0, paused);
+      } else {
+        loadSegment(index, position, paused);
+      }
+    }
+
+    video.addEventListener("ended", () => loadSegment(playback.index + 1));
+    video.addEventListener("loadedmetadata", () => {
+      videoContainer.setAttribute("aria-busy", "false");
+    });
+    video.addEventListener("error", () => {
+      videoContainer.setAttribute("aria-busy", "false");
+      playback.error = "This segment is unavailable. Try another segment or camera, or download the route.";
+    });
+
+    dialog.addEventListener("close", () => {
+      requestController.abort();
+      video.onloadedmetadata = null;
+      player = null;
+    }, { once: true });
+
+    fetchJson(`/api/routes/${encodeURIComponent(route.name)}`, { signal: requestController.signal }).then(data => {
+      if (requestController.signal.aborted) {
+        return;
+      }
+
+      playback.cameras = data.camera_segments;
+      const cameras = Object.keys(data.camera_segments);
+      if (!cameras.length) {
+        playback.error = "No camera footage remains in this route.";
+        return;
+      }
+
+      if (!playback.cameras.forward) {
+        playback.camera = cameras[0];
+      }
+
+      loadSegment(0);
+    }).catch(error => {
+      if (!requestController.signal.aborted) {
+        playback.error = error.message;
+      }
+    }).finally(() => {
+      if (!requestController.signal.aborted) {
+        playback.loading = false;
+        if (playback.error) {
+          videoContainer.setAttribute("aria-busy", "false");
+        }
+      }
+    });
+  }
+
+  html`
+    <div class="screen-recordings-wrapper">
+      <section class="screen-recordings-widget">
+        <h1 class="screen-recordings-title">Dashcam Routes</h1>
+        <button type="button" class="show-preserved-button" aria-pressed="${() => state.preservedOnly}"
+          @click="${() => {
+            state.preservedOnly = !state.preservedOnly;
+          }}">
+          ${() => state.preservedOnly ? "Show All Routes" : "Show Only Preserved Routes"}
+        </button>
+        <p class="screen-recordings-message" role="status" aria-live="polite">${() => {
+          if (state.error) {
+            return state.error;
+          }
+
+          if (state.loading) {
+            return "...";
+          }
+
+          if (!state.routes.length) {
+            return "No dashcam routes found.";
+          }
+
+          if (state.preservedOnly && !state.routes.some(route => route.is_preserved)) {
+            return "No preserved routes.";
+          }
+
+          return "";
+        }}</p>
+        <button type="button" class="show-preserved-button" hidden="${() => !state.error}" @click="${refresh}">Try again</button>
+        <div class="screen-recordings-grid" aria-label="Dashcam routes" aria-busy="${() => state.loading}">
+          ${() => state.routes.filter(route => !state.preservedOnly || route.is_preserved).map(route => mediaCard(
+            route, routeTitle(route), () => play(route), () => state.busy || state.loading,
+            html`<button type="button" class="preserved-icon" disabled="${() => state.busy || state.loading}"
+              aria-label="${() => route.preservation === "route" ? "Unpreserve whole route" : "Preserve whole route"}"
+              title="${() => route.preservation === "route" ? "Unpreserve whole route" : "Preserve whole route"}"
+              @click="${() => setPreserved(route, route.preservation !== "route")}">
+              <i class="${() => route.is_preserved ? "bi bi-heart-fill" : "bi bi-heart"}" aria-hidden="true"></i>
+            </button>`))}
+          ${() => {
+            if (!state.loading) {
+              return "";
+            }
+
+            const count = Math.min(6, Math.max(0, state.total - state.routes.length));
+
+            return Array.from({ length: count }, () => html`<article class="recording-card" aria-hidden="true">
+              <span class="recording-preview-container" aria-busy="true"></span>
+              <span class="recording-filename">...</span>
+            </article>`);
+          }}
+        </div>
+        <button type="button" class="delete-all-button" hidden="${() => !state.routes.length && !(state.loading && state.total)}"
+          disabled="${() => state.loading || state.busy}" @click="${removeAll}">Delete Routes</button>
+      </section>
     </div>
-  `;
+  `(container);
+
+  refresh();
+
+  return () => {
+    controller.abort();
+    player?.close();
+    bulkDialog?.close();
+    container.querySelectorAll("img").forEach(image => image.removeAttribute("src"));
+  };
 }

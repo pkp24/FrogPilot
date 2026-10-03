@@ -1,5 +1,6 @@
 #include "selfdrive/ui/qt/onroad/buttons.h"
 
+#include <QFileInfo>
 #include <QMovie>
 #include <QPainter>
 
@@ -36,8 +37,26 @@ void ExperimentalButton::showEvent(QShowEvent *event) {
   updateTheme();
 }
 
+void ExperimentalButton::hideEvent(QHideEvent *event) {
+  clearMovie(wheel_gif, this);
+
+  QPushButton::hideEvent(event);
+}
+
 void ExperimentalButton::updateTheme() {
-  loadImage("../../frogpilot/assets/active_theme/steering_wheel/wheel", wheel_img, wheel_gif, QSize(img_size, img_size), this);
+  use_stock_wheel = frogpilotUIState()->frogpilot_toggles.value("wheel_image").toString() == "stock";
+
+  if (isVisible()) {
+    loadImage("../../frogpilot/selfdrive/assets/active_theme/steering_wheel/wheel", wheel_img, wheel_gif, QSize(img_size, img_size), this);
+  } else {
+    clearMovie(wheel_gif, this);
+  }
+
+  const QString wheel_source = QFileInfo("../../frogpilot/selfdrive/assets/active_theme/steering_wheel/wheel.png").canonicalFilePath();
+  const QString stock_source = QFileInfo("../../frogpilot/selfdrive/assets/stock_theme/steering_wheel/wheel.png").canonicalFilePath();
+  wheel_is_stock = !wheel_gif && !wheel_img.isNull() && wheel_source == stock_source;
+
+  update();
 }
 
 void ExperimentalButton::changeMode() {
@@ -66,7 +85,9 @@ void ExperimentalButton::updateState(const UIState &s, const FrogPilotUIState &f
   // FrogPilot variables
   SubMaster &fpsm = *(fs.sm);
 
-  use_stock_wheel = frogpilot_toggles.value("wheel_image").toString() == "stock";
+  if (use_stock_wheel != (frogpilot_toggles.value("wheel_image").toString() == "stock")) {
+    updateTheme();
+  }
 
   if (frogpilot_toggles.value("rotating_wheel").toBool() && steering_angle != -fpsm["carState"].getCarState().getSteeringAngleDeg()) {
     steering_angle = -fpsm["carState"].getCarState().getSteeringAngleDeg();
@@ -77,9 +98,8 @@ void ExperimentalButton::updateState(const UIState &s, const FrogPilotUIState &f
   }
 
   if (params_memory.getBool("UpdateWheelImage")) {
-    loadImage("../../frogpilot/assets/active_theme/steering_wheel/wheel", wheel_img, wheel_gif, QSize(img_size, img_size), this);
-
     params_memory.remove("UpdateWheelImage");
+    updateTheme();
   }
 }
 
@@ -128,7 +148,7 @@ void ExperimentalButton::paintEvent(QPaintEvent *event) {
   clip_path.addEllipse(QPoint(btn_size / 2, btn_size / 2), btn_size / 2, btn_size / 2);
   p.setClipPath(clip_path);
 
-  if (use_stock_wheel) {
+  if (wheel_is_stock) {
     QPixmap img = experimental_mode ? experimental_img : engage_img;
     drawIcon(p, QPoint(btn_size / 2, btn_size / 2), img, background_color, (isDown() || !engageable) ? 0.6 : 1.0, steering_angle);
   } else if (wheel_gif) {

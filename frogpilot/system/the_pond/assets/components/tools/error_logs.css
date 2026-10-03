@@ -16,11 +16,15 @@
 }
 
 #errorLogs .fileEntry {
+  background: transparent;
   border: none;
+  color: inherit;
   display: flex;
+  font: inherit;
   justify-content: center;
   padding: var(--padding-sm) var(--border-radius-xl);
   transition: box-shadow var(--transition-fast), transform var(--transition-fast);
+  width: 100%;
 }
 
 #errorLogs .fileEntry:hover {
@@ -70,7 +74,8 @@
   text-decoration: none;
 }
 
-#errorLogs #fileViewer button {
+#errorLogs #fileViewer button,
+#errorLogs #fileViewer a {
   align-items: center;
   background-color: transparent;
   border: none;
@@ -157,12 +162,6 @@
 .error-logs-wrapper #errorLogs #fileList .fileEntry:focus-visible {
   outline: 2px solid var(--text-color);
   outline-offset: -2px;
-}
-
-.error-logs-wrapper #errorLogs #fileList .fileEntry.header {
-  background-color: var(--secondary-bg);
-  cursor: default;
-  font-weight: bold;
 }
 
 .delete-all-button {

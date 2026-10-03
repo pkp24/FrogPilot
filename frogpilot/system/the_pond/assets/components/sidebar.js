@@ -1,152 +1,91 @@
-import { html, reactive } from "/assets/vendor/arrow.mjs";
-import { Link } from "/assets/components/router.js";
-import { upperFirst, hideSidebar, showSidebar } from "/assets/js/utils.js";
+import { html } from "/assets/vendor/arrow.mjs";
+import { fetchJson } from "/assets/js/api.js";
 
-const MenuItems = {
-  home: [
-    { name: "Home", link: "/", icon: "bi-house-fill" },
-  ],
-  navigation: [
-    { name: "Manage Keys", link: "/manage_navigation_keys", icon: "bi-key-fill" },
-    { name: "Set Destination", link: "/set_navigation_destination", icon: "bi-globe-americas" },
-  ],
-  recordings: [
-    { name: "Dashcam Routes", link: "/dashcam_routes", icon: "bi-camera-reels" },
-    { name: "Screen Recordings", link: "/screen_recordings", icon: "bi-record-circle" },
-  ],
-  tailscale: [
-    { name: "Tailscale", link: "/manage_tailscale", icon: "bi-wifi" },
-  ],
-  tools: [
-    { name: "Download Speed Limits", link: "/download_speed_limits", icon: "bi-download" },
-    { name: "Error Logs", link: "/manage_error_logs", icon: "bi-exclamation-triangle" },
-    { name: "Lock/Unlock Doors", link: "/lock_or_unlock_doors", icon: "bi-door-closed" },
-    { name: "Theme Maker", link: "/theme_maker", icon: "bi-palette-fill" },
-    { name: "Tmux Log", link: "/manage_tmux", icon: "bi-terminal" },
-    { name: "Toggles", link: "/manage_toggles", icon: "bi-toggle-on" },
-    { name: "Toyota Security Keys", link: "/tsk_manager", icon: "bi-key-fill" },
+const sections = {
+  Home: [["Home", "/", "house-fill"]],
+  Navigation: [["Manage Keys", "/manage_navigation_keys", "key-fill"], ["Set Destination", "/set_navigation_destination", "globe-americas"]],
+  Recordings: [["Dashcam Routes", "/dashcam_routes", "camera-reels"], ["Screen Recordings", "/screen_recordings", "record-circle"]],
+  Tailscale: [["Tailscale", "/manage_tailscale", "wifi"]],
+  Tools: [
+    ["Download Speed Limits", "/download_speed_limits", "download"],
+    ["Error Logs", "/manage_error_logs", "exclamation-triangle"],
+    ["Lock/Unlock Doors", "/lock_or_unlock_doors", "door-closed"],
+    ["Theme Maker", "/theme_maker", "palette-fill"],
+    ["Tmux Log", "/manage_tmux", "terminal"],
+    ["Toggles", "/manage_toggles", "toggle-on"],
+    ["Toyota Security Keys", "/tsk_manager", "key-fill"],
   ],
 };
 
-const state = reactive({
-  doorsVisible: false,
-  isDoorsFetched: false,
-  isTSKFetched: false,
-  tskVisible: false,
-
-  activeRoute: ""
-});
-
-export function Sidebar() {
-  const currentPath = window.location.pathname;
-  const activeItem = Object.values(MenuItems).flat().find(item => item.link === currentPath);
-  state.activeRoute = activeItem?.name ?? "";
-
-  if (!state.isDoorsFetched) {
-    state.isDoorsFetched = true;
-    (async () => {
-      try {
-        const response = await fetch("/api/doors_available");
-        const data = await response.json();
-        state.doorsVisible = data.result;
-      } catch (e) {
-        console.error("Failed to fetch door availability:", e);
-      }
-    })();
-  }
-
-  if (!state.isTSKFetched) {
-    state.isTSKFetched = true;
-    (async () => {
-      try {
-        const response = await fetch("/api/tsk_available");
-        const data = await response.json();
-        state.tskVisible = data.result;
-      } catch (e) {
-        console.error("Failed to fetch TSK availability:", e);
-      }
-    })();
-  }
-
-  function navigate(link) {
-    state.activeRoute = link.name;
-    window.scrollTo(0, 0);
-    hideSidebar();
-
-    document.querySelectorAll(".sidebar li").forEach(el => {
-      el.classList.remove("active");
-    });
-
-    const linkElement = document.querySelector(`.sidebar li a[href="${link.link}"]`);
-    if (linkElement) {
-      linkElement.parentElement.classList.add("active");
-    }
-  }
-
-  return html`
-    <div id="sidebarUnderlay" class="hidden" @click="${hideSidebar}"></div>
-    <div id="sidebar" class="sidebar" role="navigation" aria-label="Main">
+export function mountSidebar(container) {
+  html`
+    <div id="sidebarUnderlay" class="hidden" @click="${() => toggleSidebar(false)}"></div>
+    <nav id="sidebar" class="sidebar" aria-label="Main">
       <div>
         <div class="title">
-          <img class="logo" src="/assets/images/main_logo.png" alt="FrogPilot logo" />
+          <img class="logo" src="/assets/images/main_logo.png" alt="FrogPilot logo">
           <div class="title_text sidebar_header">
             <p>The Pond</p>
-            <a href="https://github.com/Aidenir" target="_blank" rel="noopener noreferrer">by&nbsp;Aidenir</a>
+            <a href="https://github.com/Aidenir" target="_blank" rel="noopener noreferrer">by Aidenir</a>
           </div>
         </div>
-        <hr />
-        ${() => Object.entries(MenuItems).map(([section, links]) => html`
+        <hr>
+        ${Object.entries(sections).map(([section, links]) => html`
           <div class="sidebar_widget">
-            <ul class="menu_section">
-              <li>
-                <span class="section-title">${upperFirst(section)}</span>
-                <ul id="${section}">
-                  ${links.map(link => {
-                    if (link.name === "Lock/Unlock Doors" && !state.doorsVisible) {
-                      return "";
-                    }
-
-                    if (link.name === "Toyota Security Keys" && !state.tskVisible) {
-                      return "";
-                    }
-
-                    const isActive = state.activeRoute === link.name;
-                    const classList = [isActive && "active"].filter(Boolean).join(" ");
-
-                    const content = html`
-                      <div class="menu-item-link">
-                        <i class="bi ${link.icon}"></i>
-                        <span>${upperFirst(link.name)}</span>
-                      </div>
-                    `;
-
-                    return html`
-                      <li class="${classList}">
-                        ${Link(link.link, content, () => navigate(link), "", isActive ? "page" : null)}
-                      </li>
-                    `;
-                  })}
-                </ul>
-              </li>
-            </ul>
+            <ul class="menu_section"><li>
+              <span class="section-title">${() => section}</span>
+              <ul>${links.map(([name, path, icon]) => html`
+                <li hidden="${() => path === "/lock_or_unlock_doors" || path === "/tsk_manager"}">
+                  <a class="menu-item-link" href="${() => path}"><i class="bi bi-${icon}" aria-hidden="true"></i><span>${() => name}</span></a>
+                </li>
+              `)}</ul>
+            </li></ul>
           </div>
         `)}
       </div>
-    </div>`;
-}
+    </nav>
+  `(container);
 
-function setupMenuButton() {
-  const button = document.getElementById("menu_button");
-  if (!button) return;
-
-  button.addEventListener("click", () => {
-    const sidebar = document.getElementById("sidebar");
-    if (sidebar?.classList.contains("visible")) {
-      hideSidebar();
-    } else {
-      showSidebar();
-    }
+  document.getElementById("menu_button").addEventListener("click", () => {
+    toggleSidebar(!document.getElementById("sidebar").classList.contains("visible"));
   });
 }
 
-document.addEventListener("DOMContentLoaded", setupMenuButton, false);
+export function toggleSidebar(visible) {
+  document.getElementById("sidebar").classList.toggle("visible", visible);
+  document.getElementById("sidebarUnderlay").classList.toggle("hidden", !visible);
+  document.documentElement.classList.toggle("no_scroll", visible);
+
+  const button = document.getElementById("menu_button");
+  button.setAttribute("aria-expanded", String(visible));
+  let label = "Open menu";
+  if (visible) {
+    label = "Close menu";
+  }
+  button.setAttribute("aria-label", label);
+}
+
+export function selectPage(path) {
+  for (const link of document.querySelectorAll("#sidebar li a")) {
+    const active = link.getAttribute("href") === path;
+    link.parentElement.classList.toggle("active", active);
+    if (active) {
+      link.setAttribute("aria-current", "page");
+    } else {
+      link.removeAttribute("aria-current");
+    }
+  }
+
+  toggleSidebar(false);
+}
+
+export async function updateAvailability(signal) {
+  const features = [["/api/doors_available", "/lock_or_unlock_doors"], ["/api/tsk_available", "/tsk_manager"]];
+
+  await Promise.all(features.map(async ([url, path]) => {
+    const data = await fetchJson(url, { signal });
+    if (!signal.aborted) {
+      document.querySelector(`#sidebar a[href="${path}"]`).parentElement.hidden = !data.result;
+    }
+  }));
+}

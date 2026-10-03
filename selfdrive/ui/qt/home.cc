@@ -13,9 +13,9 @@
 #include "selfdrive/ui/qt/maps/map_settings.h"
 #endif
 
-#include "frogpilot/ui/qt/widgets/drive_stats.h"
-#include "frogpilot/ui/qt/widgets/drive_summary.h"
-#include "frogpilot/ui/qt/widgets/model_reviewer.h"
+#include "frogpilot/selfdrive/ui/qt/widgets/drive_stats.h"
+#include "frogpilot/selfdrive/ui/qt/widgets/drive_summary.h"
+#include "frogpilot/selfdrive/ui/qt/widgets/model_reviewer.h"
 
 // HomeWindow: the container for the offroad and onroad UIs
 

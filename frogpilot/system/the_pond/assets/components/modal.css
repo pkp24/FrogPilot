@@ -13,13 +13,33 @@
   width: 90%;
 }
 
+dialog.modal::backdrop {
+  background: rgba(0, 0, 0, 0.85);
+}
+
+.dialog-close {
+  position: absolute;
+  top: 4px;
+  right: 8px;
+  padding: 0 8px;
+  color: var(--text-color);
+  border: 0;
+  background: transparent;
+  font-size: 1.8rem;
+}
+
+.dialog-content > form,
+.dialog-content form > .modal-actions {
+  margin-top: var(--gap-md);
+}
+
 .modal-actions {
   display: flex;
   gap: var(--gap-sm);
   justify-content: center;
 }
 
-.modal-actions .btn {
+.btn {
   background-color: var(--color-gray-700);
   border: none;
   border-radius: var(--border-radius-sm);
@@ -30,29 +50,34 @@
   transition: background-color var(--transition-fast), transform var(--transition-fast);
 }
 
-.modal-actions .btn.btn-danger {
+.btn.btn-danger {
   background-color: var(--danger-bg);
   color: var(--text-on-surface);
 }
 
-.modal-actions .btn.btn-danger:hover {
+.btn.btn-danger:hover {
   background-color: var(--danger-hover-bg);
   transform: var(--hover-scale-base);
 }
 
-.modal-actions .btn.btn-primary {
+.btn.btn-primary {
   background-color: var(--color-confirm);
   color: var(--text-on-surface);
 }
 
-.modal-actions .btn.btn-primary:hover {
+.btn.btn-primary:hover {
   background-color: var(--color-confirm-hover);
   transform: var(--hover-scale-base);
 }
 
-.modal-actions .btn:hover {
+.btn:hover {
   background-color: var(--color-gray-600);
   transform: var(--hover-scale-base);
+}
+
+.modal #snackbar_wrapper {
+  left: 0;
+  transform: none;
 }
 
 .modal-body {
@@ -86,26 +111,4 @@
   font-size: var(--font-size-base);
   padding: var(--padding-sm) var(--padding-base);
   width: 100%;
-}
-
-.modal-overlay {
-  align-items: flex-start;
-  background-color: var(--background-color);
-  box-sizing: border-box;
-  display: flex;
-  height: 100%;
-  justify-content: center;
-  left: 0;
-  padding-left: var(--sidebar-width);
-  padding-top: 5vh;
-  position: fixed;
-  top: 0;
-  width: 100%;
-  z-index: var(--z-tooltip);
-}
-
-@media only screen and (max-width: 768px) {
-  .modal-overlay {
-    padding-left: 0;
-  }
 }

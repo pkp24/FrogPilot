@@ -1,142 +1,119 @@
-import { html, reactive } from "/assets/vendor/arrow.mjs"
-import { Modal } from "/assets/components/modal.js"
-import { onRouteLeave } from "/assets/components/router.js"
-import { fetchJson, downloadBlob } from "/assets/js/api.js"
+import { html, reactive } from "/assets/vendor/arrow.mjs";
+import { downloadBlob, fetchJson, fetchResponse } from "/assets/js/api.js";
+import { showSnackbar } from "/assets/js/snackbar.js";
+import { confirmDialog } from "/assets/components/modal.js";
 
-export function ToggleControl () {
-  const state = reactive({
-    showResetDefaultModal: false,
-    showResetStockModal: false,
-    busy: false,
-  });
+export function mount(container) {
+  const controller = new AbortController();
+  const state = reactive({ busy: false });
 
-  const fileInput = document.createElement("input")
-  fileInput.type = "file"
-  fileInput.accept = ".json"
-  fileInput.style.display = "none"
-  fileInput.addEventListener("change", restoreToggles)
-  document.body.appendChild(fileInput)
-  onRouteLeave(() => fileInput.remove())
+  async function backup() {
+    if (state.busy) {
+      return;
+    }
 
-  async function backupToggles () {
-    state.busy = true
+    state.busy = true;
+
     try {
-      const response = await fetch("/api/toggles/backup", { method: "POST" })
-      if (!response.ok) throw new Error("Backup failed...")
-      downloadBlob(await response.blob(), "toggle-backup.json")
-      showSnackbar("Toggle backup downloaded!")
-    } catch (e) {
-      showSnackbar(e.message || "Backup failed...", "error")
+      const response = await fetchResponse("/api/toggles/backup", { method: "POST", signal: controller.signal });
+      const file = await response.blob();
+
+      if (!controller.signal.aborted) {
+        downloadBlob(file, "toggle-backup.json");
+        showSnackbar("Toggle backup downloaded!");
+      }
+    } catch (error) {
+      if (!controller.signal.aborted) {
+        showSnackbar(error.message, "error");
+      }
     } finally {
-      state.busy = false
+      state.busy = false;
     }
   }
 
-  async function restoreToggles (event) {
-    const uploadedFile = event.target.files[0]
-    if (!uploadedFile) return
-    state.busy = true
+  async function restore(event) {
+    const file = event.currentTarget.files[0];
+    event.currentTarget.value = "";
+    if (!file || state.busy) {
+      return;
+    }
+
+    state.busy = true;
+
     try {
-      const toggleData = JSON.parse(await uploadedFile.text())
+      const data = JSON.parse(await file.text());
+      if (controller.signal.aborted) {
+        return;
+      }
+
       const result = await fetchJson("/api/toggles/restore", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(toggleData)
-      })
-      showSnackbar((result && result.message) || "Toggles restored!")
-    } catch (e) {
-      showSnackbar(e.message || "Restore failed...", "error")
-    } finally {
-      event.target.value = ""
-      state.busy = false
-    }
-  }
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data),
+      });
 
-  function confirmResetDefault () {
-    state.showResetDefaultModal = true;
-  }
-
-  async function resetTogglesToDefault () {
-    state.showResetDefaultModal = false;
-    state.busy = true;
-    showSnackbar("Resetting toggles to their default values...");
-    try {
-      const res = await fetch("/api/toggles/reset_default", { method: "POST" });
-      if (!res.ok) {
-        showSnackbar("Reset to default failed...", "error");
-        return;
+      if (!controller.signal.aborted) {
+        showSnackbar(result.message);
       }
-      showSnackbar("Rebooting...");
-    } catch (e) {
-      showSnackbar(e.message || "Reset to default failed...", "error");
+    } catch (error) {
+      if (!controller.signal.aborted) {
+        showSnackbar(`Could not restore toggles: ${error.message}`, "error");
+      }
     } finally {
       state.busy = false;
     }
   }
 
-  function confirmResetStock () {
-    state.showResetStockModal = true;
-  }
+  async function reset(stock) {
+    if (state.busy) {
+      return;
+    }
 
-  async function resetTogglesToStock () {
-    state.showResetStockModal = false;
     state.busy = true;
-    showSnackbar("Resetting toggles to stock openpilot values...");
+    let defaults = "FrogPilot defaults";
+    let action = "reset_default";
+    if (stock) {
+      defaults = "stock openpilot defaults";
+      action = "reset_stock";
+    }
+
     try {
-      const res = await fetch("/api/toggles/reset_stock", { method: "POST" });
-      if (!res.ok) {
-        showSnackbar("Reset to stock failed...", "error");
+      const confirmed = await confirmDialog("Reset toggles", `Reset all toggles to ${defaults} and reboot the device?`, {
+        confirmText: "Reset and reboot", danger: true,
+      });
+      if (!confirmed || controller.signal.aborted) {
         return;
       }
-      showSnackbar("Rebooting...");
-    } catch (e) {
-      showSnackbar(e.message || "Reset to stock failed...", "error");
+
+      const result = await fetchJson(`/api/toggles/${action}`, { method: "POST" });
+      if (!controller.signal.aborted) {
+        showSnackbar(result.message);
+      }
+    } catch (error) {
+      if (!controller.signal.aborted) {
+        showSnackbar(error.message, "error");
+      }
     } finally {
       state.busy = false;
     }
   }
 
-  function triggerRestorePrompt () {
-    fileInput.click()
-  }
-
-  return html`
+  html`
     <div class="toggle-control-wrapper">
       <section class="toggle-control-widget">
-        <div class="toggle-control-title">Backup/Restore Toggles</div>
-        <p class="toggle-control-text">
-          Use the buttons below to backup or restore your toggles.
-        </p>
-        <button class="toggle-control-button" disabled="${() => state.busy}" @click="${backupToggles}">Backup Toggles</button>
-        <button class="toggle-control-button" disabled="${() => state.busy}" @click="${triggerRestorePrompt}">Restore Toggles</button>
+        <h1 class="toggle-control-title">Backup/Restore Toggles</h1>
+        <p class="toggle-control-text">Save your toggle settings or restore a compatible backup.</p>
+        <button type="button" class="toggle-control-button" disabled="${() => state.busy}" @click="${backup}">Backup Toggles</button>
+        <button type="button" class="toggle-control-button" disabled="${() => state.busy}"
+          @click="${() => container.querySelector('input[type="file"]').click()}">Restore Toggles</button>
+        <input type="file" accept=".json,application/json" hidden @change="${restore}">
       </section>
-
-      <section class="toggle-control-widget" style="margin-left: 1.5rem">
-        <div class="toggle-control-title">Reset Toggles to Default FrogPilot/Stock openpilot</div>
-        <p class="toggle-control-text">
-          Reset all toggles to default FrogPilot/stock openpilot settings.
-        </p>
-        <button class="toggle-control-button" disabled="${() => state.busy}" @click="${confirmResetDefault}">
-          Reset Toggles to Default
-        </button>
-        <button class="toggle-control-button" disabled="${() => state.busy}" @click="${confirmResetStock}">
-          Reset Toggles to Stock
-        </button>
+      <section class="toggle-control-widget">
+        <h2 class="toggle-control-title">Reset Toggles to Default FrogPilot/Stock openpilot</h2>
+        <p class="toggle-control-text">Reset all toggles and reboot. Resets are available only while offroad.</p>
+        <button type="button" class="toggle-control-button" disabled="${() => state.busy}" @click="${() => reset(false)}">Reset Toggles to Default</button>
+        <button type="button" class="toggle-control-button" disabled="${() => state.busy}" @click="${() => reset(true)}">Reset Toggles to Stock</button>
       </section>
     </div>
-    ${() => state.showResetDefaultModal ? Modal({
-        title: "Reset Toggles",
-        message: "Are you sure you want to reset all toggles to their default FrogPilot values?",
-        onConfirm: resetTogglesToDefault,
-        onCancel: () => { state.showResetDefaultModal = false; },
-        confirmText: "Reset to Default"
-      }) : ""}
-    ${() => state.showResetStockModal ? Modal({
-        title: "Reset Toggles",
-        message: "Are you sure you want to reset all toggles to stock openpilot values?",
-        onConfirm: resetTogglesToStock,
-        onCancel: () => { state.showResetStockModal = false; },
-        confirmText: "Reset to Stock"
-      }) : ""}
-  `
+  `(container);
+
+  return () => controller.abort();
 }

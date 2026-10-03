@@ -1,144 +1,68 @@
 import { html, reactive } from "/assets/vendor/arrow.mjs";
+import { fetchJson } from "/assets/js/api.js";
 
-function DiskUsage(disk) {
-  const used = parseFloat(disk.usedPercentage) || 0;
-  const rightRadius = used >= 100 ? "0" : "var(--border-radius-md)";
+export function mount(container) {
+  const controller = new AbortController();
+  const state = reactive({ data: null, error: "" });
+  const format = value => (value || 0).toLocaleString("en-US", { maximumFractionDigits: 0 });
 
-  return html`
-    <div class="disk">
-      <p>${() => disk.used} used of ${() => disk.size}</p>
-      <div class="progress">
-        <div
-          class="bar"
-          style="
-            border-bottom-right-radius: ${rightRadius};
-            border-top-right-radius: ${rightRadius};
-            width: ${100 - used}%;
-          "
-        ></div>
-      </div>
-    </div>
-  `;
-}
-
-function DriveStat(title, stats = {}, defaultUnit) {
-  const format = (n) =>
-    (Math.round(Number(n) || 0) + 0).toLocaleString("en-US", {
-      minimumFractionDigits: 0,
-      maximumFractionDigits: 0,
-    });
-
-  return html`
-    <div class="drivingStat">
-      <h2>${title}</h2>
-      <div><p>${format(stats.drives)}</p><p>drives</p></div>
-      <div><p>${format(stats.distance)}</p><p>${stats.unit ?? defaultUnit}</p></div>
-      <div><p>${format(stats.hours)}</p><p>hours</p></div>
-    </div>
-  `;
-}
-
-function renderSoftwareInfo(info = {}) {
-  const fields = [
-    ["Branch Name", info.branchName],
-    ["Build", info.buildEnvironment],
-    ["Commit Hash", info.commitHash],
-    ["Fork Maintainer", info.forkMaintainer],
-    ["Update Available", info.updateAvailable],
-    ["Version Date", info.versionDate],
-  ];
-
-  return fields.map(
-    ([label, value]) =>
-      html`<p><strong>${() => label}:</strong> ${() => value ?? "Unknown"}</p>`
-  );
-}
-
-function renderDiskUsageSection({ diskError, diskUsage }) {
-  if (diskError) {
-    const lines = Array.isArray(diskError) ? diskError : [diskError];
-    return lines.map((line) => html`<p>${() => line}</p>`);
-  }
-  if (diskUsage?.length) {
-    return diskUsage.map(DiskUsage);
-  }
-  return DiskUsage({ size: "0 GB", used: "0 GB", usedPercentage: "0" });
-}
-
-export function Home() {
-  const state = reactive({
-    data: null,
-    unit: "miles",
-    isLoading: true,
-    error: null,
+  fetchJson("/api/stats", { signal: controller.signal }).then(data => {
+    state.data = data;
+  }).catch(error => {
+    if (!controller.signal.aborted) {
+      state.error = error.message;
+    }
   });
 
-  async function initialize() {
-    try {
-      const [statsResponse, unitResponse] = await Promise.all([
-        fetch("/api/stats"),
-        fetch("/api/params?key=IsMetric"),
-      ]);
-
-      if (!statsResponse.ok) throw new Error(`API error: ${statsResponse.statusText}`);
-      if (!unitResponse.ok) throw new Error(`API error: ${unitResponse.statusText}`);
-
-      const statsJson = await statsResponse.json();
-      const isMetricText = (await unitResponse.text()).trim();
-      const isMetric = isMetricText === "1";
-
-      state.data = statsJson;
-      state.unit = isMetric ? "kilometers" : "miles";
-      localStorage.setItem("isMetric", isMetricText);
-    } catch (err) {
-      console.error("Failed to initialize component:", err);
-      state.error = err.message;
-    } finally {
-      state.isLoading = false;
-    }
-  }
-
-  initialize();
-
-  return html`
-    <div>
-    <div role="status" aria-live="polite" aria-busy="${() => state.isLoading}">
-      ${() => {
-        if (state.isLoading) {
-          return html`<p>Loading...</p>`;
-        }
-        if (state.error) {
-          return html`<p class="error">Failed to load data: ${() => state.error}</p>`;
-        }
-        if (!state.data) {
-          return html`<p>No data available.</p>`;
-        }
-        return "";
-      }}
-    </div>
+  html`
+    <h1>The Pond</h1>
     ${() => {
-      if (!state.data) return "";
-      const { driveStats, softwareInfo } = state.data;
+      if (state.error) {
+        return html`<p class="error" role="alert">${() => state.error}</p>`;
+      }
+
+      const diskUsage = state.data?.diskUsage || [{ used: "0 GB", size: "0 GB", usedPercentage: 0 }];
+      const driveStats = state.data?.driveStats;
+      const softwareInfo = state.data?.softwareInfo;
+      const fields = [
+        ["Branch Name", softwareInfo?.branchName || "..."], ["Build", softwareInfo?.buildEnvironment || "..."],
+        ["Commit Hash", softwareInfo ? html`
+          <a href="${() => softwareInfo.commitUrl}" target="_blank" rel="noopener noreferrer">${() => softwareInfo.commitHash}</a>
+        ` : "0".repeat(40)],
+        ["Fork Maintainer", softwareInfo?.forkMaintainer || "..."], ["Update Available", softwareInfo?.updateAvailable || "..."],
+        ["Version Date", softwareInfo?.versionDate || "..."],
+      ];
+
       return html`
-        <h1>The Pond</h1>
-
-        <div class="drivingStats">
-          ${DriveStat("All Time", driveStats?.all, state.unit)}
-          ${DriveStat("Past Week", driveStats?.week, state.unit)}
-          ${DriveStat("FrogPilot", driveStats?.frogpilot, state.unit)}
-        </div>
-
+        <section class="drivingStats" aria-label="Driving statistics" aria-busy="${() => !state.data}">
+          ${[["All Time", "all"], ["Past Week", "week"], ["FrogPilot", "frogpilot"]].map(([title, key]) => html`
+            <div class="drivingStat">
+              <h2>${() => title}</h2>
+              <div><p>${() => format(driveStats?.[key].drives)}</p><p>drives</p></div>
+              <div><p>${() => format(driveStats?.[key].distance)}</p><p>${() => driveStats?.[key].unit || "distance"}</p></div>
+              <div><p>${() => format(driveStats?.[key].hours)}</p><p>hours</p></div>
+            </div>
+          `)}
+        </section>
         <h2>Disk Usage</h2>
-        <div class="diskUsage">
-          ${renderDiskUsageSection(state.data)}
-        </div>
-
+        <section class="diskUsage" aria-busy="${() => !state.data}">
+          ${diskUsage.map(disk => html`
+            <div class="disk">
+              <p>${() => disk.used} used of ${() => disk.size}</p>
+              <div class="progress" role="meter" aria-label="Disk space used" aria-valuemin="0" aria-valuemax="100"
+                aria-valuenow="${() => parseFloat(disk.usedPercentage)}">
+                <div class="bar" style="${() => `width: ${100 - Math.min(100, Math.max(0, parseFloat(disk.usedPercentage)))}%`}"></div>
+              </div>
+            </div>
+          `)}
+        </section>
         <h2>Software Info</h2>
-        <div class="softwareInfo">
-          <div class="softwareGrid">${renderSoftwareInfo(softwareInfo)}</div>
-        </div>
-      `;
+        <section class="softwareInfo" aria-busy="${() => !state.data}"><div class="softwareGrid">
+          ${fields.map(([label, value]) => html`<p><strong>${() => label}:</strong> ${() => value}</p>`)}
+        </div></section>
+      `.key(state.data ? "loaded" : "loading");
     }}
-    </div>
-  `;
+  `(container);
+
+  return () => controller.abort();
 }
