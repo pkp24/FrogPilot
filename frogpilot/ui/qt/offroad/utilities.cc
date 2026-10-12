@@ -252,8 +252,9 @@ FrogPilotUtilitiesPanel::FrogPilotUtilitiesPanel(FrogPilotSettingsWindow *parent
 
       const QJsonObject &frogpilot_toggles = frogpilotUIState()->frogpilot_scene.frogpilot_toggles;
       QJsonArray resetRemovedKeys = frogpilot_toggles.value("reset_removed_keys").toArray();
+      bool tailscaleInstalled = frogpilot_toggles.value("tailscale_installed").toBool();
 
-      std::thread([parent, button, stock, resetRemovedKeys, this]() {
+      std::thread([parent, button, stock, resetRemovedKeys, tailscaleInstalled, this]() {
         runOnUIThread(button, [parent, button]() {
           parent->activeOperations++;
 
@@ -287,18 +288,24 @@ FrogPilotUtilitiesPanel::FrogPilotUtilitiesPanel(FrogPilotSettingsWindow *parent
         QFile::remove("/data/speed_limit_filler.json");
         QDir("/data/speed_limit_filler_images").removeRecursively();
 
+        if (params.getBool("ThePondPairing")) {
+          params.put("ThePondPairingCode", newPairingCode().toStdString());
+        }
+
+        bool signedOut = !tailscaleInstalled || QProcess::execute("/data/tailscale/tailscale", {"--socket=/data/tailscale/tailscaled.sock", "logout"}) == 0;
+
         if (stock) {
           params.putInt("TuningLevel", 3);
           params.putBool("TuningLevelConfirmed", true);
         }
 
-        runOnUIThread(button, [parent, button, this]() {
+        runOnUIThread(button, [parent, button, signedOut, this]() {
           parent->updateMetric(false, true);
           parent->updateMetric(params.getBool("IsMetric"));
           frogpilotUIState()->updateToggles();
           parent->updateTuningLevel();
 
-          button->setValue(tr("Reset!"));
+          button->setValue(signedOut ? tr("Reset!") : tr("Tailscale sign-out failed..."));
         });
 
         util::sleep_for(2500);
