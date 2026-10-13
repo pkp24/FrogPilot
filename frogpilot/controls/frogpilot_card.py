@@ -135,5 +135,6 @@ class FrogPilotCard:
     frogpilotCarState.lkasButtonPressCount = self.lkas_button_press_count
     frogpilotCarState.pauseLateral = self.pause_lateral
     frogpilotCarState.pauseLongitudinal = self.pause_longitudinal
+    frogpilotCarState.vEgo = carState.vEgo
 
     return frogpilotCarState

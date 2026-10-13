@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import flatbuffers
 import json
 import math
 import numpy as np
@@ -201,6 +202,17 @@ def get_nnff_model_files():
 def get_nnff_substitutes():
   with open(TORQUE_SUBSTITUTE_PATH, "rb") as f:
     return tomllib.load(f)
+
+
+@cache
+def get_speed_limit_reader_inputs():
+  model_file = frogpilot_paths.SPEED_LIMIT_READER_MODEL_PATH / frogpilot_variables.SPEED_LIMIT_READER_MODEL_FILES[0]
+  if not model_file.is_file():
+    model_file = frogpilot_paths.SPEED_LIMIT_READER_BUNDLED_PATH / frogpilot_variables.SPEED_LIMIT_READER_MODEL_FILES[0]
+
+  model = model_file.read_bytes()
+  net = flatbuffers.table.Table(model, flatbuffers.encode.Get(flatbuffers.packer.uoffset, model, 0))
+  return json.loads(net.String(net.Pos + net.Offset(4)))
 
 
 def get_target_branches(available_branches, current_branch):
