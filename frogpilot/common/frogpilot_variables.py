@@ -55,7 +55,6 @@ UNSURE_SIGN_AGREEMENT = 0.5               # Probability at or above which a sign
 UPDATE_CLEANUP_RATIO = 0.93               # How long git's cleanup after an update's copy takes relative to the copy, measured on a C3
 UPDATE_COPY_AVERAGE_WEIGHT = 0.3          # Share of the way each update's copy time moves the remembered average copy time toward it
 UPDATE_COPY_SECONDS = 22                  # Seconds an update's copy takes until a device's first update measures its own, measured on a C3
-UPDATE_ETA_MIN_SECONDS = 10               # Seconds an update runs before its time left is estimated
 UPDATE_PROGRESS_INTERVAL = 0.1            # Seconds between update progress checks; the shown percent climbs at most 1% per check so it counts up smoothly
 
 DISABLE_OPENPILOT_LONG_BRANDS = {"ford", "toyota"}
