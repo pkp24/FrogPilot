@@ -72,6 +72,17 @@ class HyundaiButtonBase:
       self._rx(self._button_msg(Buttons.NONE))
 
   # FrogPilot variables
+  def _toggle_aol(self, toggle_on):
+    return self._acc_state_msg(toggle_on)
+
+  def test_acc_main_on_follows_car(self):
+    self.assertFalse(self.safety.get_acc_main_on())
+    for main_on in (True, False, True):
+      self._rx(self._acc_state_msg(main_on))
+      self.assertEqual(main_on, self.safety.get_acc_main_on())
+      for main_button in (1, 0):
+        self._rx(self._button_msg(Buttons.NONE, main_button=main_button))
+        self.assertEqual(main_on, self.safety.get_acc_main_on())
 
 
 class HyundaiLongitudinalBase(common.LongitudinalAccelSafetyTest):
@@ -155,3 +166,9 @@ class HyundaiLongitudinalBase(common.LongitudinalAccelSafetyTest):
     self.assertTrue(self.safety.get_relay_malfunction())
 
   # FrogPilot variables
+  def _toggle_aol(self, toggle_on):
+    self._rx(self._button_msg(Buttons.NONE))
+    return self._button_msg(Buttons.NONE, main_button=int(toggle_on != self.safety.get_acc_main_on()))
+
+  def test_acc_main_on_follows_car(self):
+    pass
