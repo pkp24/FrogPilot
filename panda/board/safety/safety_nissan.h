@@ -40,12 +40,17 @@ const int NISSAN_PARAM_ALT_EPS_BUS = 1;
 
 bool nissan_alt_eps = false;
 
+// FrogPilot variables
+uint32_t nissan_acc_main_ts_last = 0;
+
 static void nissan_rx_hook(const CANPacket_t *to_push) {
   int bus = GET_BUS(to_push);
   int addr = GET_ADDR(to_push);
 
+  // FrogPilot variables
   if (addr == 0x1b6) {
     acc_main_on = GET_BIT(to_push, 36U);
+    nissan_acc_main_ts_last = microsecond_timer_get();
   }
 
   if (bus == (nissan_alt_eps ? 1 : 0)) {
@@ -73,7 +78,10 @@ static void nissan_rx_hook(const CANPacket_t *to_push) {
       if (addr == 0x15c){
         gas_pressed = ((GET_BYTE(to_push, 5) << 2) | ((GET_BYTE(to_push, 6) >> 6) & 0x3U)) > 3U;
       } else {
+        // FrogPilot variables
         acc_main_on = GET_BIT(to_push, 17U);
+        nissan_acc_main_ts_last = microsecond_timer_get();
+
         gas_pressed = GET_BYTE(to_push, 0) > 3U;
       }
     }
@@ -110,6 +118,11 @@ static bool nissan_tx_hook(const CANPacket_t *to_send) {
 
     // Factor is -0.01, offset is 1310. Flip to correct sign, but keep units in CAN scale
     desired_angle = -desired_angle + (1310.0f * NISSAN_STEERING_LIMITS.angle_deg_to_can);
+
+    // FrogPilot variables
+    if (get_ts_elapsed(microsecond_timer_get(), nissan_acc_main_ts_last) > 1000000U) {
+      acc_main_on = false;
+    }
 
     if (steer_angle_cmd_checks(desired_angle, lka_active, NISSAN_STEERING_LIMITS)) {
       violation = true;

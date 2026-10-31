@@ -141,7 +141,7 @@ def report_tombstone_apport(fn):
 
 
 def main() -> NoReturn:
-  should_report = sentry.init(sentry.SentryProject.SELFDRIVE_NATIVE)
+  should_report = sentry.init(sentry.SentryProject.SELFDRIVE_NATIVE, native=True)
 
   # Clear apport folder on start, otherwise duplicate crashes won't register
   clear_apport_folder()

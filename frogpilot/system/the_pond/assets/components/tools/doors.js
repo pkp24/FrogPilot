@@ -1,59 +1,77 @@
-import { html, reactive } from "/assets/vendor/arrow.mjs"
-import { Modal } from "/assets/components/modal.js";
-import { fetchJson } from "/assets/js/api.js"
+import { html, reactive } from "/assets/vendor/arrow.mjs";
+import { fetchJson } from "/assets/js/api.js";
+import { showSnackbar } from "/assets/js/snackbar.js";
+import { confirmDialog } from "/assets/components/modal.js";
 
-export function DoorControl () {
-  const state = reactive({
-    busy: false,
-    showUnlockModal: false,
-  });
+export function mount(container) {
+  const controller = new AbortController();
+  const state = reactive({ available: false, busy: false, loading: true, message: "" });
 
-  async function lockDoors () {
+  async function command(action) {
+    if (state.busy || !state.available) {
+      return;
+    }
+
     state.busy = true;
+
     try {
-      const result = await fetchJson("/api/doors/lock", { method: "POST" })
-      showSnackbar((result && result.message) || "Doors locked!")
-    } catch (e) {
-      showSnackbar(e.message || "Failed to lock doors...", "error")
+      if (action === "unlock") {
+        const confirmed = await confirmDialog("Unlock doors", "Unlock your car doors?", { confirmText: "Unlock" });
+        if (!confirmed || controller.signal.aborted) {
+          return;
+        }
+      }
+
+      state.message = "Waiting for the car to confirm its door state...";
+      const result = await fetchJson(`/api/doors/${action}`, { method: "POST" });
+
+      state.message = result.message;
+      if (!controller.signal.aborted) {
+        showSnackbar(result.message);
+      }
+    } catch (error) {
+      state.message = error.message;
+      if (!controller.signal.aborted) {
+        showSnackbar(error.message, "error");
+      }
     } finally {
       state.busy = false;
     }
   }
 
-  function confirmUnlock () {
-    state.showUnlockModal = true;
-  }
-
-  async function unlockDoors () {
-    state.showUnlockModal = false;
-    state.busy = true;
-    try {
-      const result = await fetchJson("/api/doors/unlock", { method: "POST" })
-      showSnackbar((result && result.message) || "Doors unlocked!")
-    } catch (e) {
-      showSnackbar(e.message || "Failed to unlock doors...", "error")
-    } finally {
-      state.busy = false;
-    }
-  }
-
-  return html`
+  html`
     <div class="door-control-wrapper">
       <section class="door-control-widget">
-        <div class="door-control-title">Lock/Unlock Doors</div>
-        <p class="door-control-text">
-          Remotely lock or unlock your car doors using the buttons below.
-        </p>
-        <button class="door-control-button" disabled="${() => state.busy}" @click="${lockDoors}">🔒 Lock Doors</button>
-        <button class="door-control-button" disabled="${() => state.busy}" @click="${confirmUnlock}">🔓 Unlock Doors</button>
+        <h1 class="door-control-title">Lock/Unlock Doors</h1>
+        <p class="door-control-text">Remotely lock or unlock your car doors while the car is off.</p>
+        <button type="button" class="door-control-button" disabled="${() => !state.available || state.busy}"
+          @click="${() => command("lock")}">🔒 Lock Doors</button>
+        <button type="button" class="door-control-button" disabled="${() => !state.available || state.busy}"
+          @click="${() => command("unlock")}">🔓 Unlock Doors</button>
+        <p class="door-control-text" role="status" aria-live="polite" aria-busy="${() => state.loading}">${() => {
+          if (state.loading) {
+            return "...";
+          }
+
+          return state.message;
+        }}</p>
       </section>
-      ${() => state.showUnlockModal ? Modal({
-          title: "Confirm Unlock",
-          message: "Are you sure you want to unlock your car doors?",
-          onConfirm: unlockDoors,
-          onCancel: () => { state.showUnlockModal = false; },
-          confirmText: "Unlock"
-      }) : ""}
     </div>
-  `
+  `(container);
+
+  fetchJson("/api/doors_available", { signal: controller.signal }).then(data => {
+    state.available = data.result;
+    state.message = "Door control is not supported for this vehicle and device.";
+    if (state.available) {
+      state.message = "Ready. Door commands are available while the car is off.";
+    }
+  }).catch(error => {
+    if (!controller.signal.aborted) {
+      state.message = error.message;
+    }
+  }).finally(() => {
+    state.loading = false;
+  });
+
+  return () => controller.abort();
 }

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 import unittest
-from panda import Panda
+from panda import ALTERNATIVE_EXPERIENCE, Panda
 from panda.tests.libpanda import libpanda_py
 import panda.tests.safety.common as common
 from panda.tests.safety.common import CANPackerPanda
@@ -84,6 +84,27 @@ class TestNissanSafety(common.PandaCarSafetyTest, common.AngleSteeringSafetyTest
     values = {"CRUISE_ON": 1 if toggle_on else 0}
     return self.packer.make_can_msg_panda("PRO_PILOT", 2, values)
 
+  def test_always_on_lateral_main_on_stale(self):
+    self.safety.set_controls_allowed(False)
+    self.safety.set_alternative_experience(ALTERNATIVE_EXPERIENCE.ALWAYS_ON_LATERAL)
+    self._reset_angle_measurement(0)
+    self._reset_speed_measurement(1)
+    self._rx(self._toggle_aol(True))
+    angle_cmd = self.ANGLE_RATE_UP[0] / 2.0
+    self._set_prev_desired_angle(0)
+    self.assertTrue(self._tx(self._angle_cmd_msg(angle=angle_cmd, enabled=True)))
+
+    self.safety.set_timer(int(2e6))
+    self._reset_angle_measurement(0)
+    self._reset_speed_measurement(1)
+    self._rx(self._pcm_status_msg(False))
+    self._rx(self._user_gas_msg(0))
+    self._rx(self._user_brake_msg(0))
+    self.safety.safety_tick_current_safety_config()
+    self.assertTrue(self.safety.safety_config_valid())
+    self._set_prev_desired_angle(0)
+    self.assertFalse(self._tx(self._angle_cmd_msg(angle=angle_cmd, enabled=True)))
+
 
 class TestNissanSafetyAltEpsBus(TestNissanSafety):
   """Altima uses different buses"""
@@ -123,6 +144,9 @@ class TestNissanLeafSafety(TestNissanSafety):
     # CRUISE_THROTTLE, CRUISE_AVAILABLE is the main on button for Leaf
     values = {"CRUISE_AVAILABLE": 1 if toggle_on else 0}
     return self.packer.make_can_msg_panda("CRUISE_THROTTLE", 0, values)
+
+  def test_always_on_lateral_main_on_stale(self):
+    pass
 
 
 if __name__ == "__main__":

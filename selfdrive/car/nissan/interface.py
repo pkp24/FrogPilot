@@ -1,11 +1,10 @@
-from cereal import car, custom
+from cereal import car
 from panda import Panda
 from openpilot.selfdrive.car import create_button_events, get_safety_config
 from openpilot.selfdrive.car.interfaces import CarInterfaceBase
 from openpilot.selfdrive.car.nissan.values import CAR
 
 ButtonType = car.CarState.ButtonEvent.Type
-FrogPilotButtonType = custom.FrogPilotCarState.ButtonEvent.Type
 
 
 class CarInterface(CarInterfaceBase):
@@ -35,7 +34,7 @@ class CarInterface(CarInterfaceBase):
 
     ret.buttonEvents = [
       *create_button_events(self.CS.distance_button, self.CS.prev_distance_button, {1: ButtonType.gapAdjustCruise}),
-      *create_button_events(self.CS.lkas_enabled, self.CS.lkas_previously_enabled, {1: FrogPilotButtonType.lkas}),
+      *create_button_events(self.CS.lkas_pressed, self.CS.lkas_previously_pressed, {1: ButtonType.lkas}),
     ]
 
     events = self.create_common_events(ret, extra_gears=[car.CarState.GearShifter.brake])

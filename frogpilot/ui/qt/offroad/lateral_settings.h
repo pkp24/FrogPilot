@@ -6,7 +6,7 @@ class FrogPilotLateralPanel : public FrogPilotListWidget {
   Q_OBJECT
 
 public:
-  explicit FrogPilotLateralPanel(FrogPilotSettingsWindow *parent);
+  explicit FrogPilotLateralPanel(FrogPilotSettingsWindow *parent, bool forceOpen = false);
 
 signals:
   void openSubPanel();
@@ -16,11 +16,9 @@ protected:
 
 private:
   void updateMetric(bool metric, bool bootRun);
-  void updateState(const UIState &s);
   void updateToggles();
 
-  bool forceOpenDescriptions;
-  bool started;
+  bool forceOpenDescriptions = false;
 
   std::map<QString, AbstractControl*> toggles;
 
@@ -32,13 +30,13 @@ private:
 
   QSet<QString> parentKeys;
 
-  FrogPilotParamValueButtonControl *steerDelayToggle;
-  FrogPilotParamValueButtonControl *steerFrictionToggle;
-  FrogPilotParamValueButtonControl *steerLatAccelToggle;
-  FrogPilotParamValueButtonControl *steerKPToggle;
-  FrogPilotParamValueButtonControl *steerRatioToggle;
+  FrogPilotParamValueButtonControl *steerDelayToggle = nullptr;
+  FrogPilotParamValueButtonControl *steerFrictionToggle = nullptr;
+  FrogPilotParamValueButtonControl *steerLatAccelToggle = nullptr;
+  FrogPilotParamValueButtonControl *steerKPToggle = nullptr;
+  FrogPilotParamValueButtonControl *steerRatioToggle = nullptr;
 
-  FrogPilotSettingsWindow *parent;
+  FrogPilotSettingsWindow *parent = nullptr;
 
   QJsonObject frogpilotToggleLevels;
 

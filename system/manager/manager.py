@@ -18,8 +18,8 @@ from openpilot.system.athena.registration import register, UNREGISTERED_DONGLE_I
 from openpilot.common.swaglog import cloudlog, add_file_handler
 from openpilot.system.version import get_build_metadata, terms_version, training_version
 
-from openpilot.frogpilot.common.frogpilot_functions import convert_params, frogpilot_boot_functions, setup_frogpilot, uninstall_frogpilot
-from openpilot.frogpilot.common.frogpilot_variables import EXCLUDED_KEYS, frogpilot_default_params, get_frogpilot_toggles, params_cache, params_memory
+from openpilot.frogpilot.common.frogpilot_api import FrogPilotAPI
+from openpilot.frogpilot.common import frogpilot_functions, frogpilot_variables
 
 
 def manager_init() -> None:
@@ -35,8 +35,10 @@ def manager_init() -> None:
     params.clear_all(ParamKeyType.DEVELOPMENT_ONLY)
 
   # FrogPilot variables
-  setup_frogpilot(build_metadata)
-  convert_params(params_cache)
+  frogpilot_api = FrogPilotAPI(params)
+
+  frogpilot_functions.setup_frogpilot(build_metadata)
+  frogpilot_functions.convert_params(frogpilot_variables.params_cache)
 
   default_params: list[tuple[str, str | bytes]] = [
     ("CompletedTrainingVersion", "0"),
@@ -54,24 +56,27 @@ def manager_init() -> None:
     params.put_bool("RecordFront", True)
 
   # set unset params
+  # FrogPilot variables
   reset_toggles = params.get_bool("DoToggleReset")
   reset_toggles_stock = params.get_bool("DoToggleResetStock")
-  for k, v, stock in [(k, v, v) for k, v in default_params] + [(k, v, stock) for k, v, _, stock in frogpilot_default_params]:
-    if (reset_toggles or reset_toggles_stock) and k in EXCLUDED_KEYS:
+  for k, v, stock in [(k, v, v) for k, v in default_params] + [(k, v, stock) for k, v, _, stock in frogpilot_variables.frogpilot_default_params]:
+    if (reset_toggles or reset_toggles_stock) and k in frogpilot_variables.EXCLUDED_KEYS:
       continue
 
     if params.get(k) is None or reset_toggles or reset_toggles_stock:
-      if params_cache.get(k) is None or reset_toggles or reset_toggles_stock:
+      if frogpilot_variables.params_cache.get(k) is None or reset_toggles or reset_toggles_stock:
         params.put(k, v if not reset_toggles_stock else stock)
-        params_cache.remove(k)
+        frogpilot_variables.params_cache.remove(k)
       else:
-        params.put(k, params_cache.get(k))
+        params.put(k, frogpilot_variables.params_cache.get(k))
     else:
-      params_cache.put(k, params.get(k))
+      value = params.get(k)
+      if frogpilot_variables.params_cache.get(k) != value:
+        frogpilot_variables.params_cache.put(k, value)
   params.remove("DoToggleReset")
   params.remove("DoToggleResetStock")
 
-  frogpilot_boot_functions(build_metadata, params_cache)
+  frogpilot_functions.frogpilot_boot_functions(build_metadata)
 
   # Create folders needed for msgq
   try:
@@ -106,6 +111,9 @@ def manager_init() -> None:
 
   if not build_metadata.openpilot.is_dirty:
     os.environ['CLEAN'] = '1'
+
+  # FrogPilot variables
+  frogpilot_api.register_device(build_metadata)
 
   # init logging
   sentry.init(sentry.SentryProject.SELFDRIVE)
@@ -151,16 +159,13 @@ def manager_thread() -> None:
   sm = messaging.SubMaster(['deviceState', 'carParams', 'frogpilotPlan'], poll='deviceState')
   pm = messaging.PubMaster(['managerState'])
 
+  # FrogPilot variables
+  frogpilot_toggles = frogpilot_variables.get_frogpilot_toggles()
+
   write_onroad_params(False, params)
-  ensure_running(managed_processes.values(), False, params=params, CP=sm['carParams'], not_run=ignore, classic_model=False, tinygrad_model=False, frogpilot_toggles=get_frogpilot_toggles())
+  ensure_running(managed_processes.values(), False, params=params, CP=sm['carParams'], not_run=ignore, frogpilot_toggles=frogpilot_toggles)
 
   started_prev = False
-
-  # FrogPilot variables
-  frogpilot_toggles = get_frogpilot_toggles()
-
-  classic_model = frogpilot_toggles.classic_model
-  tinygrad_model = frogpilot_toggles.tinygrad_model
 
   while True:
     sm.update(1000)
@@ -168,17 +173,16 @@ def manager_thread() -> None:
     started = sm['deviceState'].started
 
     if started and not started_prev:
+      # FrogPilot variables
       if not frogpilot_toggles.force_onroad:
         params.clear_all(ParamKeyType.CLEAR_ON_ONROAD_TRANSITION)
 
-      # FrogPilot variables
-      frogpilot_toggles = get_frogpilot_toggles()
-
-      classic_model = frogpilot_toggles.classic_model
-      tinygrad_model = frogpilot_toggles.tinygrad_model
+      frogpilot_toggles = frogpilot_variables.get_frogpilot_toggles()
     elif not started and started_prev:
       params.clear_all(ParamKeyType.CLEAR_ON_OFFROAD_TRANSITION)
-      params_memory.clear_all(ParamKeyType.CLEAR_ON_OFFROAD_TRANSITION)
+
+      # FrogPilot variables
+      frogpilot_variables.params_memory.clear_all(ParamKeyType.CLEAR_ON_OFFROAD_TRANSITION)
 
     # update onroad params, which drives pandad's safety setter thread
     if started != started_prev:
@@ -186,7 +190,12 @@ def manager_thread() -> None:
 
     started_prev = started
 
-    ensure_running(managed_processes.values(), started, params=params, CP=sm['carParams'], not_run=ignore, classic_model=classic_model, tinygrad_model=tinygrad_model, frogpilot_toggles=frogpilot_toggles)
+    ensure_running(managed_processes.values(), started, params=params, CP=sm['carParams'], not_run=ignore, frogpilot_toggles=frogpilot_toggles)
+
+    # FrogPilot variables
+    if frogpilot_variables.params_memory.get_bool("RestartMapd"):
+      frogpilot_variables.params_memory.remove("RestartMapd")
+      managed_processes["mapd"].restart()
 
     running = ' '.join("{}{}\u001b[0m".format("\u001b[32m" if p.proc.is_alive() else "\u001b[31m", p.name)
                        for p in managed_processes.values() if p.proc)
@@ -210,8 +219,7 @@ def manager_thread() -> None:
       break
 
     # Update FrogPilot variables
-    if sm['frogpilotPlan'].togglesUpdated:
-      frogpilot_toggles = get_frogpilot_toggles()
+    frogpilot_toggles = frogpilot_variables.get_frogpilot_toggles(sm)
 
 def main() -> None:
   manager_init()
@@ -232,7 +240,7 @@ def main() -> None:
   params = Params()
   if params.get_bool("DoUninstall"):
     cloudlog.warning("uninstalling")
-    uninstall_frogpilot()
+    frogpilot_functions.uninstall_frogpilot()
   elif params.get_bool("DoReboot"):
     cloudlog.warning("reboot")
     HARDWARE.reboot()

@@ -1,90 +1,131 @@
+import hashlib
+import hmac
+import ipaddress
+import json
 import re
-import socket
-import struct
+import secrets
 
 from datetime import datetime
-from urllib.parse import urlsplit
+from flask import abort, request
 from pathlib import Path
+from urllib.parse import urlsplit
 
-PARAM_GET_ALLOWLIST = frozenset({
-  "IsMetric", "DiscordUsername",
-  "DownloadableColors", "DownloadableDistanceIcons", "DownloadableIcons",
-  "DownloadableSignals", "DownloadableSounds", "DownloadableWheels",
-})
-PARAM_MEMORY_GET_ALLOWLIST = frozenset({"ThemeDownloadProgress"})
+from openpilot.frogpilot.common import frogpilot_variables
 
-ONROAD_BLOCKED = frozenset({
-  ("POST", "/api/toggles/reset_default"),
-  ("POST", "/api/toggles/reset_stock"),
-  ("POST", "/api/toggles/restore"),
-  ("POST", "/api/themes/apply"),
-  ("POST", "/api/tailscale/setup"),
-  ("POST", "/api/tailscale/uninstall"),
-  ("DELETE", "/api/routes/delete_all"),
-  ("DELETE", "/api/screen_recordings/delete_all"),
-  ("DELETE", "/api/error_logs/delete_all"),
-  ("DELETE", "/api/tmux_log/delete_all"),
-})
+PAIRING_COOKIE = "the_pond"
+PAIRING_COOKIE_AGE = 10 * 365 * 24 * 60 * 60
 
-def is_onroad_blocked(method: str, path: str) -> bool:
-  return (method, path) in ONROAD_BLOCKED
 
-_SECOC_RE = re.compile(r"^[0-9a-fA-F]{32}$")
+def json_body(fields=None, max_size=None):
+  if max_size is not None and request.content_length is not None and request.content_length > max_size:
+    abort(413, "Request is too large")
 
-def is_valid_secoc_key(value) -> bool:
-  return isinstance(value, str) and bool(_SECOC_RE.fullmatch(value))
+  data = request.get_json(silent=True)
+  if not isinstance(data, dict):
+    abort(400, "Expected a JSON object")
+  if fields is not None and set(data) - fields:
+    abort(400, "Unrecognized request fields")
 
-_DISPLAY_NAME_MAX = 256
-_UNSAFE_NAME_RE = re.compile(r"[<>\x00-\x1f\x7f]")
+  return data
 
-def is_safe_display_name(name) -> bool:
-  if not isinstance(name, str):
-    return False
-  if len(name) > _DISPLAY_NAME_MAX:
-    return False
-  return _UNSAFE_NAME_RE.search(name) is None
 
-def route_segment_matches(segment: str, route_name: str) -> bool:
-  return segment == route_name or segment.startswith(route_name + "--")
+def is_within(base, target):
+  return Path(target).resolve().is_relative_to(Path(base).resolve())
 
-def is_within(base, target) -> bool:
-  base_r = Path(base).resolve()
-  target_r = Path(target).resolve()
-  return base_r == target_r or base_r in target_r.parents
 
-def _bare_host(value: str | None) -> str | None:
-  if not value:
+def is_safe_display_name(name):
+  return isinstance(name, str) and len(name) <= 256 and re.search(r"[<>\x00-\x1f\x7f]", name) is None
+
+
+def is_safe_slug(value):
+  return isinstance(value, str) and re.fullmatch(r"[a-z0-9_'.-]+(~[A-Za-z0-9_'.-]+)?", value) is not None and ".." not in value
+
+
+def theme_asset_slug(name):
+  return name.lower().replace("(", "").replace(")", "").replace(" ", "_").replace("_animated", "-animated")
+
+
+def format_ordinal_date(date):
+  day = date.day
+  suffix = "th"
+  if not 11 <= day <= 13:
+    suffix = {1: "st", 2: "nd", 3: "rd"}.get(day % 10, "th")
+
+  return date.strftime(f"%B {day}{suffix}, %Y")
+
+
+def http_origin(value):
+  try:
+    parsed = urlsplit(value or "")
+    if parsed.scheme not in ("http", "https") or not parsed.hostname or parsed.username is not None or parsed.password is not None:
+      return None
+    if parsed.path or parsed.query or parsed.fragment:
+      return None
+
+    port = parsed.port
+    if port is None:
+      port = 80
+      if parsed.scheme == "https":
+        port = 443
+
+    return parsed.scheme, parsed.hostname.lower().rstrip("."), port
+  except ValueError:
     return None
-  host = urlsplit(value).hostname if "//" in value else value.split(":", 1)[0]
-  return host.lower() if host else None
 
-def origin_allowed(origin: str | None, allowed_hosts: set[str]) -> bool:
-  bare = _bare_host(origin)
-  return bare is not None and bare in allowed_hosts
 
-def format_ordinal_date(dt: datetime) -> str:
-  day = dt.day
-  suffix = "th" if 11 <= day <= 13 else {1: "st", 2: "nd", 3: "rd"}.get(day % 10, "th")
-  return dt.strftime(f"%B {day}{suffix}, %Y")
+def host_allowed(scheme, host):
+  origin = http_origin(f"{scheme}://{host}")
+  if origin is None:
+    return False
 
-MDNS_HOSTNAME = "ThePond.local"
+  hostname = origin[1]
+  if "." not in hostname:
+    return True
+  if hostname.endswith((".local", ".lan", ".home", ".home.arpa", ".internal", ".localdomain", ".fritz.box", ".ts.net")):
+    return True
 
-def encode_dns_name(name: str) -> bytes:
-  out = bytearray()
-  for label in name.split("."):
-    if label:
-      out.append(len(label))
-      out += label.encode("ascii")
-  out.append(0)
-  return bytes(out)
+  try:
+    ipaddress.ip_address(hostname)
+    return True
+  except ValueError:
+    return False
 
-def is_mdns_query_for(data: bytes, name: str = MDNS_HOSTNAME) -> bool:
-  return len(data) >= 12 and not (data[2] & 0x80) and encode_dns_name(name).lower() in data.lower()
 
-def is_mdns_response_for(data: bytes, name: str = MDNS_HOSTNAME) -> bool:
-  return len(data) >= 12 and bool(data[2] & 0x80) and encode_dns_name(name).lower() in data.lower()
+def origin_allowed(origin, scheme, host, ports):
+  expected = http_origin(f"{scheme}://{host}")
+  return expected is not None and expected[2] in ports and http_origin(origin) == expected
 
-def build_mdns_a_response(ip: str, name: str = MDNS_HOSTNAME) -> bytes:
-  header = struct.pack(">HHHHHH", 0, 0x8400, 0, 1, 0, 0)
-  record = struct.pack(">HHIH", 1, 0x8001, 120, 4)
-  return header + encode_dns_name(name) + record + socket.inet_aton(ip)
+
+def referer_allowed(referer, scheme, host, ports):
+  try:
+    parsed = urlsplit(referer or "")
+    return origin_allowed(f"{parsed.scheme}://{parsed.netloc}", scheme, host, ports)
+  except ValueError:
+    return False
+
+
+def is_paired():
+  if not frogpilot_variables.params.get_bool("ThePondPairing"):
+    return True
+
+  token = request.cookies.get(PAIRING_COOKIE)
+  authorization = request.headers.get("Authorization", "")
+  if authorization.startswith("Bearer "):
+    token = authorization.removeprefix("Bearer ")
+  if token is None:
+    return False
+
+  browsers = json.loads(frogpilot_variables.params.get("ThePondPairedBrowsers") or b"[]")
+  token_hash = hashlib.sha256(token.encode()).hexdigest()
+  return any(hmac.compare_digest(browser["hash"], token_hash) for browser in browsers)
+
+
+def pair_browser():
+  token = secrets.token_urlsafe(32)
+
+  browsers = json.loads(frogpilot_variables.params.get("ThePondPairedBrowsers") or b"[]")
+  browsers.append({"hash": hashlib.sha256(token.encode()).hexdigest(), "id": secrets.token_hex(4),
+                   "name": request.headers.get("User-Agent", "")[:200], "paired": int(datetime.now().timestamp())})
+  frogpilot_variables.params.put("ThePondPairedBrowsers", json.dumps(browsers))
+
+  return PAIRING_COOKIE, token, {"httponly": True, "max_age": PAIRING_COOKIE_AGE, "samesite": "Strict"}

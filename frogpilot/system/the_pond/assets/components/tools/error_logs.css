@@ -16,11 +16,15 @@
 }
 
 #errorLogs .fileEntry {
+  background: transparent;
   border: none;
+  color: inherit;
   display: flex;
+  font: inherit;
   justify-content: center;
-  padding: var(--padding-sm) var(--border-radius-xl);
+  padding: var(--padding-sm) var(--padding-base);
   transition: box-shadow var(--transition-fast), transform var(--transition-fast);
+  width: 100%;
 }
 
 #errorLogs .fileEntry:hover {
@@ -33,7 +37,6 @@
   color: var(--text-color);
   margin-bottom: var(--border-radius-xl);
   overflow-y: auto;
-  transition: box-shadow var(--transition-fast), transform var(--transition-fast);
 }
 
 #errorLogs #fileList,
@@ -70,7 +73,8 @@
   text-decoration: none;
 }
 
-#errorLogs #fileViewer button {
+#errorLogs #fileViewer button,
+#errorLogs #fileViewer a {
   align-items: center;
   background-color: transparent;
   border: none;
@@ -128,41 +132,13 @@
   }
 }
 
-.error-logs-wrapper #errorLogs #fileList {
-  background-color: var(--sidebar-bg);
-  border-radius: var(--border-radius-lg);
-  margin-left: 0;
-  max-width: calc(100% - var(--padding-xl));
-  overflow-y: auto;
-  padding: var(--padding-base);
-  scrollbar-color: var(--thumb-color) var(--track-color);
-  scrollbar-width: auto;
-  width: 100%;
-}
-
-.error-logs-wrapper #errorLogs #fileList .fileEntry {
-  cursor: pointer;
-  display: flex;
-  padding: var(--padding-sm) var(--padding-base);
-}
-
 .error-logs-wrapper #errorLogs #fileList .fileEntry:not(:last-child) {
   border-bottom: 1px solid var(--sidebar-border-color);
-}
-
-.error-logs-wrapper #errorLogs #fileList .fileEntry:hover {
-  background-color: var(--sidebar-active-bg);
 }
 
 .error-logs-wrapper #errorLogs #fileList .fileEntry:focus-visible {
   outline: 2px solid var(--text-color);
   outline-offset: -2px;
-}
-
-.error-logs-wrapper #errorLogs #fileList .fileEntry.header {
-  background-color: var(--secondary-bg);
-  cursor: default;
-  font-weight: bold;
 }
 
 .delete-all-button {

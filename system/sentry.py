@@ -10,7 +10,7 @@ from openpilot.system.hardware import HARDWARE, PC
 from openpilot.common.swaglog import cloudlog
 from openpilot.system.version import get_build_metadata, get_version
 
-from openpilot.frogpilot.common.frogpilot_variables import ERROR_LOGS_PATH, params
+from openpilot.frogpilot.common import frogpilot_paths, frogpilot_variables
 
 class SentryProject(Enum):
   # python project
@@ -29,13 +29,16 @@ def report_tombstone(fn: str, message: str, contents: str) -> None:
     sentry_sdk.flush()
 
 
+# FrogPilot variables
 def capture_block():
-  with sentry_sdk.push_scope() as scope:
-    sentry_sdk.capture_message("Blocked user from using the development branch", level='info')
-    sentry_sdk.flush()
+  sentry_sdk.capture_message("Blocked user from using a restricted branch", level='info')
+  sentry_sdk.flush()
 
 
 def capture_exception(*args, crash_log=True, **kwargs) -> None:
+  cloudlog.error("crash", exc_info=kwargs.get('exc_info', 1))
+
+  # FrogPilot variables
   exc_text = traceback.format_exc()
 
   phrases_to_check = [
@@ -47,7 +50,6 @@ def capture_exception(*args, crash_log=True, **kwargs) -> None:
     return
 
   save_exception(exc_text, crash_log)
-  cloudlog.error("crash", exc_info=kwargs.get('exc_info', 1))
 
   try:
     sentry_sdk.capture_exception(*args, **kwargs)
@@ -60,21 +62,16 @@ def set_tag(key: str, value: str) -> None:
   sentry_sdk.set_tag(key, value)
 
 
+# FrogPilot variables
 def save_exception(exc_text: str, crash_log) -> None:
-  files = [
-    ERROR_LOGS_PATH / datetime.now().astimezone().strftime("%Y-%m-%d--%H-%M-%S.log"),
-    ERROR_LOGS_PATH / "error.txt"
-  ]
+  log_name = datetime.now().astimezone().strftime("%Y-%m-%d--%H-%M-%S.log")
+  (frogpilot_paths.ERROR_LOGS_PATH / log_name).write_text(exc_text)
 
-  for file_path in files:
-    if file_path.name == "error.txt" and crash_log:
-      lines = exc_text.splitlines()[-10:]
-      file_path.write_text("\n".join(lines))
-    else:
-      file_path.write_text(exc_text)
+  if crash_log:
+    frogpilot_paths.ERROR_FILE_PATH.write_text("\n".join(exc_text.splitlines()[-10:]))
 
 
-def init(project: SentryProject) -> bool:
+def init(project: SentryProject, native: bool = False) -> bool:
   build_metadata = get_build_metadata()
   # forks like to mess with this, so double check
   frogpilot_remote = "frogai" in build_metadata.openpilot.git_origin.lower()
@@ -85,23 +82,24 @@ def init(project: SentryProject) -> bool:
 
   if short_branch in ["COMMA", "HEAD"]:
     return False
-  elif short_branch == "FrogPilot-Development":
+  elif short_branch == frogpilot_variables.DEVELOPMENT_BRANCH:
     env = "Development"
   elif build_metadata.release_channel:
     env = "Release"
-  elif short_branch == "FrogPilot-Testing":
+  elif short_branch == frogpilot_variables.TESTING_BRANCH:
     env = "Testing"
-  elif short_branch == "FrogPilot-Staging":
+  elif short_branch == frogpilot_variables.STAGING_BRANCH:
     env = "Staging"
   else:
     env = short_branch
 
   integrations = []
-  if project == SentryProject.SELFDRIVE:
+  if not native:
     integrations.append(ThreadingIntegration(propagate_hub=True))
 
   sentry_sdk.init(project.value,
                   default_integrations=False,
+                  include_local_variables=False,
                   release=get_version(),
                   integrations=integrations,
                   traces_sample_rate=1.0,
@@ -114,10 +112,13 @@ def init(project: SentryProject) -> bool:
   sentry_sdk.set_tag("origin", build_metadata.openpilot.git_origin)
   sentry_sdk.set_tag("branch", short_branch)
   sentry_sdk.set_tag("commit", build_metadata.openpilot.git_commit)
+  sentry_sdk.set_tag("device", HARDWARE.get_device_type())
+
+  # FrogPilot variables
   sentry_sdk.set_tag("updated", params.get("Updated", encoding="utf-8"))
   sentry_sdk.set_tag("installed", params.get("InstallDate", encoding="utf-8"))
 
-  if project == SentryProject.SELFDRIVE:
+  if not native:
     sentry_sdk.Hub.current.start_session()
 
   return True
